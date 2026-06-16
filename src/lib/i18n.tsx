@@ -26,8 +26,13 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = React.useState<Language>("zh");
 
   React.useEffect(() => {
+    // Hydrate from localStorage after mount (SSR has no window) — this is a one-time
+    // sync from an external store, not a derived-state anti-pattern.
     const stored = window.localStorage.getItem(LANGUAGE_KEY);
-    if (stored === "en" || stored === "zh") setLanguageState(stored);
+    if (stored === "en" || stored === "zh") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLanguageState(stored);
+    }
   }, []);
 
   const setLanguage = React.useCallback((lang: Language) => {

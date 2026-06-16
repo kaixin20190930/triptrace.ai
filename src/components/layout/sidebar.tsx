@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { useLanguage } from "@/lib/i18n";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -32,7 +33,7 @@ export function Sidebar({ onOpenAccount }: { onOpenAccount: () => void }) {
 
   return (
     <aside className="flex w-64 shrink-0 flex-col gap-6 border-r border-border bg-card px-4 py-6">
-      <a href="/" className="flex items-center gap-3 px-2" aria-label="TripTrace.ai">
+      <Link href="/" className="flex items-center gap-3 px-2" aria-label="TripTrace.ai">
         <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary font-serif text-lg font-bold text-primary-foreground">
           T
         </span>
@@ -40,7 +41,7 @@ export function Sidebar({ onOpenAccount }: { onOpenAccount: () => void }) {
           <strong className="font-serif text-base">TripTrace.ai</strong>
           <small className="text-xs text-muted-foreground">AI Life Memory OS</small>
         </span>
-      </a>
+      </Link>
 
       <nav aria-label="主要导航" className="flex flex-col gap-1">
         <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">{t("nav.groupPrivate")}</p>

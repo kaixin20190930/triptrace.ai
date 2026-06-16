@@ -1,6 +1,7 @@
 "use client";
 
 import { AppShell } from "@/components/layout/app-shell";
+import { CapturePanel } from "@/components/capture/capture-panel";
 import { useLanguage } from "@/lib/i18n";
 
 export default function Home() {
@@ -46,11 +47,8 @@ export default function Home() {
         </div>
       </section>
 
-      <section
-        id="capture"
-        className="flex min-h-[200px] items-center justify-center rounded-2xl border border-dashed border-border text-sm text-muted-foreground"
-      >
-        Capture 模块将在 Session 2 迁移（流式生成 + 照片上传）
+      <section id="capture">
+        <CapturePanel />
       </section>
     </AppShell>
   );
