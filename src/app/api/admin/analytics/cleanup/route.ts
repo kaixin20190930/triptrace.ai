@@ -1,6 +1,6 @@
-import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { HttpError, requireDb } from "@/lib/server/cf";
 import { errorResponse, jsonResponse } from "@/lib/server/http";
+import { requireAdminToken } from "@/lib/server/admin-auth";
 import {
   ANALYTICS_CLEANUP_BATCH,
   ANALYTICS_RETENTION_DAYS,
@@ -11,8 +11,6 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const ADMIN_TOKEN_HEADER = "x-triptrace-admin-token";
-
 /**
  * Operator endpoint for enforcing the 90-day raw analytics retention rule.
  *
@@ -20,33 +18,6 @@ const ADMIN_TOKEN_HEADER = "x-triptrace-admin-token";
  * `ADMIN_TASK_TOKEN` it refuses to run at all rather than falling back to open access.
  * It is intended to be called by a scheduled job or by an operator, not by the product.
  */
-async function requireAdminToken(request: Request): Promise<Response | null> {
-  const { env } = await getCloudflareContext({ async: true });
-  const expected = (env as unknown as { ADMIN_TASK_TOKEN?: string }).ADMIN_TASK_TOKEN;
-
-  if (!expected) {
-    return errorResponse(
-      "ADMIN_TASK_TOKEN is not configured, so administrative tasks are disabled.",
-      503,
-      "admin_token_missing",
-    );
-  }
-
-  const provided = request.headers.get(ADMIN_TOKEN_HEADER) || "";
-  // Length-independent comparison is unnecessary here because both values are
-  // server-controlled secrets of fixed shape, but an early length check keeps the
-  // failure path cheap.
-  if (provided.length !== expected.length) {
-    return errorResponse("not allowed", 403, "admin_forbidden");
-  }
-  let diff = 0;
-  for (let i = 0; i < expected.length; i += 1) {
-    diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
-  }
-  if (diff !== 0) return errorResponse("not allowed", 403, "admin_forbidden");
-
-  return null;
-}
 
 /** Reports what would be deleted without changing anything. */
 export async function GET(request: Request) {

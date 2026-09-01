@@ -64,7 +64,20 @@ Keep the binding names `DB` and `MEDIA`. The application resolves both by bindin
 ```bash
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put ADMIN_TASK_TOKEN
+# Billing. Omit these and checkout reports itself unavailable, while the webhook
+# refuses every delivery. Both are safe states.
+npx wrangler secret put STRIPE_SECRET_KEY
+npx wrangler secret put STRIPE_WEBHOOK_SECRET
+npx wrangler secret put STRIPE_PRICE_FOUNDING_MONTHLY
+npx wrangler secret put STRIPE_PRICE_FOUNDING_ANNUAL
 ```
+
+Stripe setup order matters: create the two prices first (`$9.99` monthly and `$79`
+annual), then add the webhook endpoint pointing at `https://<deployment>/api/billing/webhook`
+subscribing to `checkout.session.completed`, `customer.subscription.created`,
+`customer.subscription.updated`, and `customer.subscription.deleted`, and only then copy the
+signing secret. The price ids are not secrets, but keeping them with the other billing
+values avoids a half-configured deployment.
 
 Notes:
 
@@ -123,7 +136,10 @@ afterwards.
 | 17 | `/world-land.json` | `200`, served from the app origin |
 | 18 | `GET /api/admin/analytics/cleanup` without token | `403` |
 | 19 | Same with the correct token | `200`, `retentionDays: 90` |
-| 20 | `/`, `/explore` | indexable; `/vault`, `/timeline`, `/map` `noindex` |
+| 20 | `/`, `/explore` | indexable; `/vault`, `/timeline`, `/map`, `/plan` `noindex` |
+| 21 | `POST /api/billing/webhook` unsigned | `400 stripe_missing_signature` |
+| 22 | Stripe test checkout end to end | plan becomes Founding Plus after the webhook |
+| 23 | Cancel in the customer portal | returns to Free, all saved traces still accessible |
 
 Then delete the throwaway account and its rows.
 

@@ -14,8 +14,9 @@ Rule:
 2. Run `npx tsc --noEmit`.
 3. Run `npm run build`.
 3a. Apply pending migrations to local D1 with `npx wrangler d1 migrations apply triptrace --local`, then confirm the `d1_migrations` ledger lists every file in `migrations/`.
-3b. Run `npm run test:map`; it needs no server and must report all checks passing.
+3b. Run `npm run test:unit`; it needs no server, no Stripe account, and must report all checks passing.
 3c. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
+3c-2. Run `STRIPE_WEBHOOK_SECRET=<local secret> ADMIN_TASK_TOKEN=<local token> npm run test:billing -- http://127.0.0.1:3000` and confirm every check passes.
 3d. Run `npm run qa:cleanup` afterwards and confirm no `qa-entitlements-*` or `qa-gen-quota-*` account remains in local D1.
 4. Test the current change on desktop and mobile widths.
 5. Test signed out and signed in when auth, storage, media, or privacy is affected.
@@ -232,12 +233,20 @@ test, because the privacy promise depends on it.
 19. Confirm the map is usable at mobile width and does not trap page scrolling outside the map area.
 20. Switch between light and dark themes and confirm land, water, graticule, and points all remain legible.
 
-Automated coverage: `npm run test:map` verifies the projection, view clamping, fitting,
+Automated coverage: `npm run test:unit` verifies the projection, view clamping, fitting,
 zoom anchoring, marker grouping, chronological connector, and the bundled outline. Run it
 after any change to `src/lib/atlas-projection.ts` or the outline asset.
 
 If the outline ever needs regenerating, run `npm run build:world-land` against a Natural
 Earth 1:110m land GeoJSON. The output is committed on purpose so builds stay offline.
+
+## 9.3 Owner-Only Analytics Summary
+
+1. Call `GET /api/admin/analytics/summary` with no token and confirm `403`, or `503` when `ADMIN_TASK_TOKEN` is unset.
+2. Call it with the correct token and confirm it returns counts per event name, distinct visitor counts, and totals.
+3. Confirm the response contains no story text, no coordinates, no emails, and no event properties of any kind.
+4. Add `?days=7` and confirm the window narrows; add `?days=999` and confirm it is capped at the 90-day retention window.
+5. Add `?userId=<id>` and confirm the counts narrow to that account.
 
 ## 10. Plans, Quotas, And Server-Side Limits
 
@@ -294,11 +303,68 @@ Run these with `curl` or any HTTP client, not through the interface.
 7. Confirm every refusal body contains a stable `error.code` plus an `entitlement` block with `planKey`, `limit`, `used`, and `remaining`.
 8. Send more than ten guest generation requests within an hour from one IP and confirm the route starts returning `429 rate_limited` with a `Retry-After` header.
 
-### 10.6 Plan Changes
+### 10.6 Plan Changes Without Stripe
 
-Until Stripe lands, plan changes are made by writing a `subscriptions` row directly.
+Plan state can always be set by writing a `subscriptions` row directly, which is the
+fastest way to check the entitlement layer in isolation.
 
 1. Insert an `active` `founding_plus` row with a future `current_period_end`; confirm `/api/entitlements` reports 500 traces and 50 generations.
 2. Set `current_period_end` to a past date; confirm the plan degrades to Free.
 3. Set `status` to `canceled`; confirm the plan degrades to Free while the account keeps read, edit, and delete rights over existing traces.
 4. Confirm a degraded account can still open, edit, export, and delete traces it already saved.
+
+## 11. Billing
+
+Pricing is fixed: Founding Plus is `$9.99` per month or `$79` per year. Do not change these
+figures while testing.
+
+### 11.1 Plan Page
+
+1. Open `/plan` while signed out and confirm it explains the guest allowance and links to account creation, with upgrade buttons disabled.
+2. Sign in and confirm the page shows the current plan, saved-trace usage, and AI-draft usage with correct numbers against `/api/entitlements`.
+3. Confirm the usage bars have accessible names and report the same used and limit values as the API.
+4. Confirm the page states that a cancelled plan keeps read, export, and delete rights.
+5. Confirm `/plan` is `noindex`, since it is a private account surface.
+6. Confirm the account dropdown in the sidebar links to `/plan` as a real link, so it can be opened in a new tab.
+
+### 11.2 Configuration States
+
+1. With no `STRIPE_SECRET_KEY`, click an upgrade button and confirm the visible message says billing is not available rather than showing a raw failure.
+2. With no `STRIPE_WEBHOOK_SECRET`, post anything to `/api/billing/webhook` and confirm `503 billing_not_configured`. The webhook must never accept an unverifiable delivery.
+3. With a key configured but the requested price missing, confirm `503 billing_price_missing`.
+4. Confirm `POST /api/billing/checkout` and `POST /api/billing/portal` both return `401` when signed out.
+5. Confirm `POST /api/billing/portal` returns `409 billing_no_customer` for an account with no billing history.
+
+### 11.3 Stripe Test Mode
+
+Use Stripe test keys and the Stripe CLI. Never use live keys for QA.
+
+1. `stripe listen --forward-to http://127.0.0.1:3000/api/billing/webhook` and copy the printed `whsec_` value into `.dev.vars`.
+2. Start a monthly checkout from `/plan`, pay with the `4242 4242 4242 4242` test card, and confirm the browser returns to `/plan?checkout=success`.
+3. Confirm the page states that the plan updates once Stripe confirms, and that the plan becomes Founding Plus after the webhook arrives.
+4. Confirm `/api/entitlements` then reports 500 traces and 50 monthly AI drafts.
+5. Save more than 3 traces and confirm the previous Free limit no longer applies.
+6. Repeat with the annual price and confirm it also grants Founding Plus.
+7. Start a checkout and abandon it; confirm the plan does not change and `/plan?checkout=cancelled` says nothing was charged.
+8. Open the customer portal, cancel at period end, and confirm the plan stays Founding Plus while the page shows that it cancels at period end.
+9. Let the cancellation take effect, or trigger `customer.subscription.deleted`, and confirm the account returns to Free.
+10. Confirm every trace saved while on Founding Plus is still readable, editable, exportable, and deletable after returning to Free.
+11. Use `stripe trigger` to resend a delivered event and confirm the response reports `duplicate` without changing state.
+12. Stop the forwarder, change the plan in Stripe, restart the forwarder, and confirm the queued events reconcile the plan correctly.
+13. Confirm a `payment_failed` state does not immediately revoke access mid-period.
+
+### 11.4 Security Checks
+
+1. Post an unsigned webhook and confirm `400 stripe_missing_signature`.
+2. Post a webhook signed with the wrong secret and confirm `400 stripe_signature_mismatch`.
+3. Sign a payload, then modify one character before sending, and confirm `400 stripe_signature_mismatch`.
+4. Sign a payload with a timestamp an hour old and confirm `400 stripe_timestamp_out_of_tolerance`, so a captured request cannot be replayed indefinitely.
+5. Send a subscription event whose price id is not one of the configured prices and confirm the account is not granted a paid plan.
+6. Send an event whose metadata names another account id and confirm no plan is attached to it.
+7. Confirm no client request can set a plan: `PATCH`ing or `POST`ing plan fields anywhere must have no effect on entitlements.
+8. Confirm the analytics summary shows one `subscription_started` per real transition, not one per Stripe update.
+
+Automated coverage: `npm run test:unit` covers the checkout payload, price mapping, signature
+primitives, and event mapping with no network. `npm run test:billing` drives the live webhook
+endpoint with locally signed payloads and asserts acceptance, rejection, idempotency,
+ordering, plan transitions, and billing analytics. Neither needs a Stripe account.

@@ -98,6 +98,9 @@ export function Sidebar({ onOpenAccount }: { onOpenAccount: () => void }) {
               </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
+              {/* Base UI merges props into the rendered element, so this stays a real
+                  link with normal keyboard and open-in-new-tab behaviour. */}
+              <DropdownMenuItem render={<Link href="/plan" />}>Plan and usage</DropdownMenuItem>
               <DropdownMenuItem onClick={() => signOut()}>{t("auth.signout")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

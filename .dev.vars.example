@@ -6,3 +6,12 @@ OPENAI_MODEL=gpt-5.2
 # Shared secret for operator-only maintenance endpoints such as the 90-day
 # analytics retention sweep. Leave it unset to keep those endpoints disabled.
 ADMIN_TASK_TOKEN=replace_with_a_long_random_token
+
+# Stripe. Leave STRIPE_SECRET_KEY unset and checkout reports itself unavailable
+# instead of failing at the provider. Leave STRIPE_WEBHOOK_SECRET unset and the
+# webhook refuses every delivery, because an unsigned webhook cannot be trusted.
+# Use test-mode keys locally; never commit a live key.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_FOUNDING_MONTHLY=
+STRIPE_PRICE_FOUNDING_ANNUAL=

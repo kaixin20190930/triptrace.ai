@@ -371,7 +371,7 @@ Required:
 - R2 binding as `MEDIA`
 - Auth/session secret if current auth flow adds one later
 
-Future Stripe:
+Stripe (implemented; values still to be provisioned):
 
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`

@@ -48,12 +48,16 @@ Owner-only steps, which cannot be completed by an agent:
 3. Section 10 of `docs/manual-testing-guide.md` in a real browser, especially the guest-demo refusal and the Free-plan limit copy.
 4. Section 9.2 of `docs/manual-testing-guide.md` in a real browser. The map geometry is covered by automated tests, but pan, pinch zoom, focus rings, theme legibility, and the absence of third-party requests need human eyes on a real device.
 
+Owner-executed infrastructure, which an agent must not do unprompted:
+
+5. `RB-301` Provision fresh production D1/R2 resources following `docs/production-provisioning-runbook.md`. The current `wrangler.jsonc` still points at the legacy production database and bucket, so no remote migration or deploy may run until the bindings are repointed.
+6. Create the Stripe account, the `$9.99` monthly and `$79` annual prices, and the webhook endpoint, then run the test-mode checkout in section 11.3 of the manual testing guide. Every code path is implemented and locally verified; only the account and keys are missing.
+
 Remaining engineering work:
 
-4. `RB-301` Provision fresh production D1/R2 resources following `docs/production-provisioning-runbook.md`. This is owner-executed: the current `wrangler.jsonc` still points at the legacy production database and bucket, so no remote migration or deploy may run until the bindings are repointed.
-5. `PA-405 to PA-410` Stripe checkout, webhook, and portal on top of the now-enforceable entitlement layer.
-6. `PA-108 follow-up` Observability for R2 media cleanup retries.
-7. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable.
+7. `PA-108 follow-up` Observability for R2 media cleanup retries.
+8. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable.
+9. Wire the three test suites into a CI runner so regressions are caught without remembering to run them.
 
 ## Completion Snapshot
 
@@ -75,8 +79,8 @@ Remaining engineering work:
 | Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
 | Sharing/export/deletion | IN_PROGRESS | Copy, poster export, and owner-only trace deletion exist; selected share links and account deletion are incomplete |
 | Entitlements and server limits | DONE | Plan resolution, usage metering, and server enforcement on generate/media/memories are implemented and verified by 37 automated API checks |
-| Automated API and privacy tests | IN_PROGRESS | `scripts/api-entitlement-tests.mjs` covers privacy, ownership, deletion, and every entitlement rule against local D1/R2; it is not yet wired into a CI runner |
-| Billing | NOT_STARTED | Stripe checkout, webhooks, and customer portal are not implemented; the entitlement layer they need is now in place |
+| Automated tests | IN_PROGRESS | 71 unit checks with no server, 44 API/privacy/entitlement checks, and 34 billing checks all pass locally; none are wired into a CI runner yet |
+| Billing | DONE (pending Stripe account) | Checkout, customer portal, signed idempotent webhook, `/plan` page, and billing analytics are implemented and verified with locally signed payloads; real Stripe keys, prices, and a test-mode end-to-end run remain |
 | Production deployment | NOT_STARTED | No deployment evidence from rebuilt repository |
 
 ## Progress Log
@@ -267,6 +271,40 @@ Production risk recorded rather than acted on:
 
 - `wrangler.jsonc` still binds `DB` to the legacy production database `triptrace` and `MEDIA` to the legacy bucket `triptrace-media`. Local development is unaffected because Wrangler keeps a separate local database, but any `--remote` migration or any deploy would reach legacy production data, which the clean-cut decision explicitly rules out. The bindings must be repointed to fresh resources before either is run. This is flagged, not changed, because creating cloud resources is the owner's call.
 
+Stripe billing implemented (`PA-405` to `PA-410`, `PA-603`):
+
+- Added `migrations/0010_stripe_events.sql` with a `stripe_events` idempotency ledger and an index on `subscriptions.provider_customer_id`, which webhooks use to resolve an account.
+- Added `src/lib/server/stripe.ts` for signature verification, the checkout payload, price-to-plan mapping, event mapping, and subscription persistence. Environment access is separated into `stripe-config.ts` so the logic module stays free of Cloudflare runtime imports and can be unit tested directly.
+- Added `POST /api/billing/checkout`, `POST /api/billing/portal`, and `POST /api/billing/webhook`.
+- Added `/plan`, a private `noindex` page showing the current plan, real usage against limits, upgrade buttons at `$9.99` monthly and `$79` annually, and a manage-billing button once a Stripe customer exists. Linked from the sidebar account menu.
+- Added `src/lib/server/analytics.ts` and `GET /api/admin/analytics/summary` so the billing funnel is measurable. `subscription_started` and `subscription_cancelled` are recorded server-side on real plan transitions only.
+
+The architecture keeps payment out of the access-control path. Stripe writes only to `subscriptions`; entitlements are re-derived from that table on every request. A missing, delayed, or dropped webhook can therefore only under-grant, never over-grant.
+
+Five specific safeguards, each covered by a test:
+
+- An unverifiable webhook is refused. With no `STRIPE_WEBHOOK_SECRET` the endpoint returns `503` rather than trusting the payload, and the timestamp is checked before the digest so a captured request cannot be replayed indefinitely.
+- Event ids are claimed in a ledger, so a replayed delivery is acknowledged without being applied twice. When a handler throws, the claim is released so Stripe's retry can still be processed; keeping it would turn a transient failure into permanent data loss.
+- An unrecognised price maps to `free`, never to a paid plan, so a misconfigured price cannot silently grant Founding Plus.
+- A `userId` in event metadata is verified against the users table before use, so a forged id cannot attach a plan to an arbitrary account.
+- Stripe does not guarantee event ordering, so `checkout.session.completed` only links the customer and never writes plan state. A late checkout delivery cannot downgrade an already-active subscription.
+
+Two defects found and fixed during this work:
+
+- The checkout route checked Stripe configuration before validating the request body, so a bad `interval` returned `503 billing_not_configured` instead of `400 invalid_interval`. Input validation now comes first.
+- The first draft of the webhook wrote `plan_key` and `status` on checkout events, which meant a late `checkout.session.completed` would downgrade an active subscriber to `free`/`incomplete`. Customer linking is now a separate statement that leaves plan state alone.
+
+Verification:
+
+- Added `scripts/stripe-unit-tests.mts`: 39 of 39 checks pass with no network and no Stripe account, covering configuration resolution, price-to-plan mapping in both directions, the checkout payload for new and returning customers, signature generation and verification including rotation, tampering, truncation, and clock skew, and event mapping for created, updated, deleted, cancelling, unknown-price, checkout, and unhandled events.
+- Added `scripts/api-billing-tests.mjs`: 34 of 34 checks pass against local dev. Because Stripe's scheme is an HMAC over `<timestamp>.<payload>`, the script signs its own deliveries and exercises the real endpoint: unsigned, malformed, wrong-secret, stale, and tampered payloads are all rejected with distinct codes; a signed event grants Founding Plus through the entitlement layer; a replay is reported as a duplicate; a late checkout does not downgrade; an unrecognised price does not grant; cancel-at-period-end retains access; deletion returns the account to Free while read access is preserved; an expired period does not grant; unknown and forged accounts are not applied; and the billing funnel records one event per real transition rather than one per Stripe update.
+- Added a resolution hook (`scripts/ts-resolve-hooks.mjs`) so the unit runners understand the `@/` alias and extensionless imports. This is test-harness only and no application code depends on it.
+- `npm run test:unit` now runs both unit suites: 71 checks. `npm run test:api` remains 44 checks and was re-run to confirm no regression.
+- `npm run lint`, `./node_modules/.bin/tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` all pass. The five new routes and `/plan` are registered.
+- All QA accounts, subscriptions, usage counters, and webhook ledger rows created during testing were removed. `scripts/qa-cleanup.sql` was generalised to match any `qa-*@example.invalid` account, and local D1 is back to five pre-existing accounts, two memories, and 79 analytics rows.
+
+Local environment note: placeholder `STRIPE_WEBHOOK_SECRET` and price ids were appended to the gitignored `.dev.vars` for testing. `STRIPE_SECRET_KEY` was deliberately left unset, which also exercised the not-configured checkout path. No real Stripe key exists in this repository or on this machine.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -294,11 +332,14 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-01 | Maintenance endpoints are closed when their token is unset | A destructive endpoint must fail shut, never open, when configuration is missing |
 | 2026-09-01 | The map renders from a bundled first-party outline instead of third-party tiles | Tile requests would reveal which part of the world a user is viewing to an outside provider, which contradicts the private-by-default promise |
 | 2026-09-01 | First-save activation is counted from a lifetime counter, not the current row count | Otherwise deleting every trace and saving again would double-count activation |
+| 2026-09-01 | Stripe writes only to `subscriptions`; entitlements are always re-derived | A dropped or delayed webhook can then only under-grant, never over-grant access |
+| 2026-09-01 | `checkout.session.completed` links the customer but never sets the plan | Stripe does not guarantee event order, so a late checkout must not downgrade an active subscriber |
+| 2026-09-01 | An unrecognised Stripe price maps to Free | A misconfigured or foreign price must never be able to grant a paid plan |
 
 ## Blockers
 
 - Fresh production D1 and R2 resources for the rebuilt product have not been provisioned.
-- Stripe account, products, webhook secret, and tax configuration have not been verified.
+- Stripe account, prices, webhook endpoint, and tax configuration do not exist yet. The integration is implemented and locally verified; only the account and keys are missing.
 - Historical prototype subjects have not been selected.
 - Complete English privacy and terms text has not received professional legal review.
 - Production needs `ADMIN_TASK_TOKEN` set before the analytics retention endpoint can be used; until then only the opportunistic sweep enforces the 90-day rule.

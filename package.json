@@ -11,7 +11,10 @@
     "cf:preview": "opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare deploy",
     "test:api": "node scripts/api-entitlement-tests.mjs",
-    "test:map": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/atlas-projection-tests.mts",
+    "test:map": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/ts-runner.mjs scripts/atlas-projection-tests.mts",
+    "test:stripe": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/ts-runner.mjs scripts/stripe-unit-tests.mts",
+    "test:unit": "npm run test:map && npm run test:stripe",
+    "test:billing": "node scripts/api-billing-tests.mjs",
     "build:world-land": "node scripts/build-world-land.mjs",
     "qa:cleanup": "wrangler d1 execute triptrace --local --file=scripts/qa-cleanup.sql"
   },
