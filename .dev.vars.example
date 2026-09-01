@@ -2,3 +2,7 @@
 # Never commit the real API key.
 OPENAI_API_KEY=replace_with_your_openai_api_key
 OPENAI_MODEL=gpt-5.2
+
+# Shared secret for operator-only maintenance endpoints such as the 90-day
+# analytics retention sweep. Leave it unset to keep those endpoints disabled.
+ADMIN_TASK_TOKEN=replace_with_a_long_random_token

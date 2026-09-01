@@ -1,6 +1,9 @@
+import type { D1Database } from "@cloudflare/workers-types";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getSessionUser } from "@/lib/server/auth";
 import { HttpError, requireDb } from "@/lib/server/cf";
 import { randomId } from "@/lib/server/crypto";
+import { deleteExpiredAnalyticsEvents } from "@/lib/server/analytics-retention";
 import { errorResponse, jsonResponse } from "@/lib/server/http";
 import { checkRateLimit } from "@/lib/server/rate-limit";
 import {
@@ -27,6 +30,23 @@ function validClientId(value: unknown, required: boolean) {
   if (value === undefined || value === null || value === "") return required ? null : undefined;
   const clean = String(value).trim();
   return CLIENT_ID_PATTERN.test(clean) ? clean : null;
+}
+
+const RETENTION_SWEEP_PROBABILITY = 0.01;
+
+async function scheduleRetentionSweep(db: D1Database) {
+  if (Math.random() >= RETENTION_SWEEP_PROBABILITY) return;
+  try {
+    const { ctx } = await getCloudflareContext({ async: true });
+    const sweep = deleteExpiredAnalyticsEvents(db).catch(() => undefined);
+    if (ctx?.waitUntil) {
+      ctx.waitUntil(sweep);
+    } else {
+      await sweep;
+    }
+  } catch {
+    // Retention is best-effort here; the admin endpoint is the guaranteed path.
+  }
 }
 
 export async function POST(request: Request) {
@@ -96,6 +116,11 @@ export async function POST(request: Request) {
         receivedAt,
       )
       .run();
+
+    // Retention is also enforced opportunistically, so the 90-day promise does not
+    // depend on a scheduled job being wired up correctly. The work runs after the
+    // response and can never delay or fail an event write.
+    await scheduleRetentionSweep(db);
 
     return jsonResponse(
       { ok: true },

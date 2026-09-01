@@ -16,6 +16,8 @@
 
 const args = process.argv.slice(2);
 const WITH_AI = args.includes("--with-ai");
+/** Optional. When set, the analytics retention dry run is included. */
+const ADMIN_TOKEN = process.env.ADMIN_TASK_TOKEN || "";
 const BASE_URL = (args.find((arg) => arg.startsWith("http")) || process.env.BASE_URL || "http://127.0.0.1:3000").replace(
   /\/$/,
   "",
@@ -417,6 +419,39 @@ async function run() {
       unconfirmedCreate.body?.error?.code === "facts_not_confirmed",
     `status=${unconfirmedCreate.response.status} code=${unconfirmedCreate.body?.error?.code}`,
   );
+
+  // ---------------------------------------------------------------- retention endpoint
+  const noTokenProbe = await guest.fetch("/api/admin/analytics/cleanup");
+  check(
+    "analytics retention endpoint is closed without an operator token",
+    noTokenProbe.status === 403 || noTokenProbe.status === 503,
+    `status=${noTokenProbe.status}`,
+  );
+
+  const badTokenProbe = await guest.fetch("/api/admin/analytics/cleanup", {
+    headers: { "x-triptrace-admin-token": "definitely-not-the-token" },
+  });
+  check(
+    "analytics retention endpoint rejects a wrong operator token",
+    badTokenProbe.status === 403 || badTokenProbe.status === 503,
+    `status=${badTokenProbe.status}`,
+  );
+
+  if (ADMIN_TOKEN) {
+    const dryRun = await guest.fetch("/api/admin/analytics/cleanup", {
+      headers: { "x-triptrace-admin-token": ADMIN_TOKEN },
+    });
+    const dryRunBody = await json(dryRun);
+    check(
+      "analytics retention dry run reports a 90-day cutoff",
+      dryRun.status === 200 &&
+        dryRunBody?.retentionDays === 90 &&
+        typeof dryRunBody?.expired === "number",
+      `status=${dryRun.status} retentionDays=${dryRunBody?.retentionDays} expired=${dryRunBody?.expired}`,
+    );
+  } else {
+    console.log("SKIP  analytics retention dry run (set ADMIN_TASK_TOKEN to include it)");
+  }
 
   // ---------------------------------------------------------------- metered AI calls
   // Opt-in because these reach the real provider and cost money.

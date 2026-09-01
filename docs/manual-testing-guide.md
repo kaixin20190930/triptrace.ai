@@ -14,7 +14,7 @@ Rule:
 2. Run `npx tsc --noEmit`.
 3. Run `npm run build`.
 3a. Apply pending migrations to local D1 with `npx wrangler d1 migrations apply triptrace --local`, then confirm the `d1_migrations` ledger lists every file in `migrations/`.
-3b. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation.
+3b. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
 3c. Run `npm run qa:cleanup` afterwards and confirm no `qa-entitlements-*` or `qa-gen-quota-*` account remains in local D1.
 4. Test the current change on desktop and mobile widths.
 5. Test signed out and signed in when auth, storage, media, or privacy is affected.
@@ -189,6 +189,21 @@ Feature-specific sections will be added as the rebuilt flow lands.
 20. Enable Global Privacy Control or Do Not Track in a supporting browser and confirm no analytics request is sent.
 21. Confirm an analytics endpoint failure never blocks generation, registration, saving, browsing, editing, or deletion.
 22. Reach a plan limit and confirm one `paywall_viewed` event is sent with only `source` and the entitlement `reason` code.
+
+### 9.1 Ninety-Day Retention
+
+Raw analytics rows must never live longer than 90 days. The operator endpoint is the
+guaranteed path; the write endpoint also sweeps opportunistically so the rule still holds
+if no schedule is configured.
+
+1. With `ADMIN_TASK_TOKEN` unset, call `GET /api/admin/analytics/cleanup` and confirm `503 admin_token_missing`. The endpoint must be closed by default, not open by default.
+2. Set `ADMIN_TASK_TOKEN` in `.dev.vars`, restart development, and call the same route with no header and then with a wrong header; confirm `403 admin_forbidden` both times.
+3. Call it with the correct `x-triptrace-admin-token` header and confirm the response reports `retentionDays: 90`, a cutoff 90 days in the past, and the number of expired rows.
+4. Insert analytics rows with `received_at` older than 90 days plus one row inside the window.
+5. `POST` the same route and confirm only the expired rows are deleted, the in-window row survives, and `remaining` returns to `0`.
+6. `POST` again and confirm `deleted` is `0`, so repeating the sweep is safe.
+7. Confirm the response never contains event contents, only counts and the cutoff.
+8. Before production collection begins, confirm a schedule calls this endpoint, or accept the opportunistic sweep and record that decision.
 
 ## 10. Plans, Quotas, And Server-Side Limits
 

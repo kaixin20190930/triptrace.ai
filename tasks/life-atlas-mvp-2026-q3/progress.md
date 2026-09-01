@@ -49,8 +49,7 @@ Owner-only steps, which cannot be completed by an agent:
 
 Remaining engineering work:
 
-4. `PA-901` Add the 90-day `analytics_events` cleanup path so production collection can start.
-5. `RB-301` Provision fresh production D1/R2 resources and record migration, binding, and smoke-test evidence.
+4. `RB-301` Provision fresh production D1/R2 resources, set `ADMIN_TASK_TOKEN`, decide whether a schedule calls the retention sweep, and record migration, binding, and smoke-test evidence.
 6. `PA-301/PA-302 follow-up` Replace the place-route placeholder with a real coordinate point map.
 7. `PA-405 to PA-410` Stripe checkout, webhook, and portal on top of the now-enforceable entitlement layer.
 8. `PA-108 follow-up` Observability for R2 media cleanup retries.
@@ -72,7 +71,7 @@ Remaining engineering work:
 | Map | IN_PROGRESS | Place-route browser, coordinate display, trace highlighting, and `?trace=` selection exist; real MapLibre/OpenFreeMap point map is not implemented |
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
 | Historical Atlas | NOT_STARTED | `/explore` is a placeholder/acquisition surface only |
-| Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; signed-in first-save and production evidence remain |
+| Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
 | Sharing/export/deletion | IN_PROGRESS | Copy, poster export, and owner-only trace deletion exist; selected share links and account deletion are incomplete |
 | Entitlements and server limits | DONE | Plan resolution, usage metering, and server enforcement on generate/media/memories are implemented and verified by 37 automated API checks |
 | Automated API and privacy tests | IN_PROGRESS | `scripts/api-entitlement-tests.mjs` covers privacy, ownership, deletion, and every entitlement rule against local D1/R2; it is not yet wired into a CI runner |
@@ -222,6 +221,25 @@ Verification:
 - Total real provider spend for this verification was three successful text-only generations plus two rejected requests.
 - All QA accounts, traces, media objects, usage rows, and subscription rows created during this session were removed. Local D1 is back to the five pre-existing accounts and two pre-existing memories, `usage_counters` and `subscriptions` are empty, and no QA object remains in local R2. Added `npm run qa:cleanup` so this is repeatable.
 
+Ninety-day analytics retention implemented (`PA-901`):
+
+- Added `src/lib/server/analytics-retention.ts` as the single definition of the 90-day cutoff and a bounded 500-row delete batch. The subselect delete form is used because `DELETE ... LIMIT` is not available on every SQLite build, and an unbounded delete has no business running inside a request.
+- Added `POST` and `GET /api/admin/analytics/cleanup`. `GET` is a dry run reporting the cutoff and expired count; `POST` sweeps up to 20 batches per call. Neither response contains event contents.
+- The endpoint is closed by default: with no `ADMIN_TASK_TOKEN` configured it returns `503 admin_token_missing` rather than falling back to open access. A wrong or missing token returns `403 admin_forbidden`.
+- `POST /api/analytics` also sweeps opportunistically on roughly one percent of writes, behind `ctx.waitUntil`, so the retention promise does not depend on a schedule being wired up correctly. It can never delay or fail an event write.
+- Added `ADMIN_TASK_TOKEN` to `.dev.vars.example`.
+
+Retention verification:
+
+- With no token configured, both methods returned `503`. After configuring a local token, a missing header and a wrong header both returned `403`.
+- A dry run reported `retentionDays: 90` and a cutoff 90 days back. Three seeded rows dated January, February, and May 2026 were reported as expired; a row dated 2026-08-25 was not.
+- The sweep deleted exactly the three expired rows, kept the in-window row, and left the oldest real event at 2026-07-29. A second sweep deleted `0`, so repeating it is safe.
+- No pre-existing analytics row was older than the cutoff, so no real event data was lost. The seeded rows were removed afterwards and the table is back to its original 79 rows.
+- The automated suite now covers the retention endpoint and reports 39 of 39 checks passing.
+- `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass with the new route registered as `ƒ /api/admin/analytics/cleanup`.
+
+Local environment change worth knowing: an `ADMIN_TASK_TOKEN` line was appended to the gitignored `.dev.vars` so the endpoint could be tested locally. Its value is a throwaway placeholder and is deliberately not recorded here. Replace it with a real random value before any deployment, and never reuse the local one.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -245,6 +263,8 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-01 | A lapsed or cancelled subscription degrades to Free, never to no access | A former subscriber must keep read, export, and delete rights over memories they already own |
 | 2026-09-01 | Guest quota metering uses its own device id, not the analytics anonymous id | Analytics can be switched off by the visitor, while abuse and cost metering must keep working |
 | 2026-09-01 | Over-cap photo requests are refused rather than truncated | Silently dropping photos let a client exceed the rule without being told |
+| 2026-09-01 | Retention has both an operator endpoint and an opportunistic sweep | A privacy promise that depends only on a correctly configured schedule is not a promise |
+| 2026-09-01 | Maintenance endpoints are closed when their token is unset | A destructive endpoint must fail shut, never open, when configuration is missing |
 
 ## Blockers
 
@@ -252,7 +272,7 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 - Stripe account, products, webhook secret, and tax configuration have not been verified.
 - Historical prototype subjects have not been selected.
 - Complete English privacy and terms text has not received professional legal review.
-- Raw `analytics_events` rows have no scheduled 90-day cleanup yet, which blocks production collection.
+- Production needs `ADMIN_TASK_TOKEN` set before the analytics retention endpoint can be used; until then only the opportunistic sweep enforces the 90-day rule.
 - First-party activation analytics are implemented and locally verified at the API/D1 layer; browser-level funnel QA and production migration remain.
 
 ## Deployment Evidence
