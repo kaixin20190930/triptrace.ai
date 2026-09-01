@@ -46,13 +46,14 @@ Owner-only steps, which cannot be completed by an agent:
 1. `PA-205/PA-206 follow-up` Narrative-quality acceptance with genuine personal travel and life photos. Only the owner can supply these; unrelated private images on this machine must not be substituted.
 2. `M2-010/PA-601/PA-602 follow-up` Observe `first_atlas_saved` once in a signed-in browser. The server flag and the client trigger are both verified in code and by API test; the remaining step is a real browser save.
 3. Section 10 of `docs/manual-testing-guide.md` in a real browser, especially the guest-demo refusal and the Free-plan limit copy.
+4. Section 9.2 of `docs/manual-testing-guide.md` in a real browser. The map geometry is covered by automated tests, but pan, pinch zoom, focus rings, theme legibility, and the absence of third-party requests need human eyes on a real device.
 
 Remaining engineering work:
 
-4. `RB-301` Provision fresh production D1/R2 resources, set `ADMIN_TASK_TOKEN`, decide whether a schedule calls the retention sweep, and record migration, binding, and smoke-test evidence.
-6. `PA-301/PA-302 follow-up` Replace the place-route placeholder with a real coordinate point map.
-7. `PA-405 to PA-410` Stripe checkout, webhook, and portal on top of the now-enforceable entitlement layer.
-8. `PA-108 follow-up` Observability for R2 media cleanup retries.
+4. `RB-301` Provision fresh production D1/R2 resources following `docs/production-provisioning-runbook.md`. This is owner-executed: the current `wrangler.jsonc` still points at the legacy production database and bucket, so no remote migration or deploy may run until the bindings are repointed.
+5. `PA-405 to PA-410` Stripe checkout, webhook, and portal on top of the now-enforceable entitlement layer.
+6. `PA-108 follow-up` Observability for R2 media cleanup retries.
+7. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable.
 
 ## Completion Snapshot
 
@@ -68,7 +69,7 @@ Remaining engineering work:
 | Private save and R2 media | IN_PROGRESS | Default private save, signed-in upload, owner-only media reads, and deletion cleanup exist; needs automated API coverage |
 | Vault | IN_PROGRESS | Search, filters, photo shelf, cards, and detail open exist; year/person filters are incomplete |
 | Timeline | IN_PROGRESS | Event-date grouping, detail open, selected preview, and `?trace=` deep-link selection exist |
-| Map | IN_PROGRESS | Place-route browser, coordinate display, trace highlighting, and `?trace=` selection exist; real MapLibre/OpenFreeMap point map is not implemented |
+| Map | DONE (pending browser QA) | Real 2D coordinate map with pan, zoom, marker grouping, chronological connector, keyboard access, and `?trace=` sync, rendered from a first-party outline with no third-party requests; place route retained for unlocated traces |
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
 | Historical Atlas | NOT_STARTED | `/explore` is a placeholder/acquisition surface only |
 | Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
@@ -240,6 +241,32 @@ Retention verification:
 
 Local environment change worth knowing: an `ADMIN_TASK_TOKEN` line was appended to the gitignored `.dev.vars` so the endpoint could be tested locally. Its value is a throwaway placeholder and is deliberately not recorded here. Replace it with a real random value before any deployment, and never reuse the local one.
 
+Real coordinate map implemented (`PA-301`, `PA-302`, `PA-303`):
+
+- Added `src/lib/atlas-projection.ts` holding the equirectangular projection, view clamping, fit-to-points, zoom anchoring, marker grouping, and the chronological connector. It is deliberately separate from React so the geometry can be tested directly rather than judged from a screenshot.
+- Added `src/components/map/atlas-map.tsx`: an SVG map with drag to pan, wheel and pinch zoom, zoom/fit controls, keyboard-activatable markers, marker grouping with a count for traces at the same spot, and a dashed chronological connector.
+- Added `public/world-land.json`, a 26 KB (11 KB gzipped) Natural Earth 1:110m land outline reduced to 104 rings and 2080 points, plus `scripts/build-world-land.mjs` to regenerate it. The asset is committed so builds stay offline.
+- Wired into `/map` beside the existing place route. Only user-confirmed coordinates are plotted; nothing is geocoded from a place name and nothing is inferred from story text. Unlocated traces stay reachable in the place route and the list, with a count explaining how many lack coordinates.
+
+The map deviates from the plan's MapLibre plus OpenFreeMap recommendation, on privacy grounds. Requesting tiles from a third party would tell that provider which part of the world the user is looking at on every pan and zoom. For a product whose core promise is that memories stay private, that is a poor trade for a nicer basemap. Browsing the Atlas map now makes no third-party request of any kind. If richer cartography is wanted later, swapping in a tile provider is a contained change, but it should be an explicit and disclosed decision rather than a default.
+
+Activation metric correction found while testing the map:
+
+- `isFirstTrace` was derived from the current stored-trace count, so a user who deleted every trace and saved again would fire `first_atlas_saved` a second time and inflate activation.
+- It is now derived from a lifetime `trace_saves_total` counter incremented atomically after each successful save, using `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`. Exactly one save per account can ever observe the value `1`.
+- Covered by two automated checks: the first save of an account is flagged and the second is not, and emptying the Atlas then saving again is not re-flagged.
+
+Map and production-prep verification:
+
+- Added `npm run test:map`, a dependency-free Node test using built-in type stripping: 32 of 32 checks pass, covering pole and antimeridian projection, a known city coordinate, view clamping and aspect ratio, single-point and widely-spread fitting, zoom bounds and anchor stability, marker grouping, connector ordering, and the outline asset's format, ranges, and size.
+- The automated API suite now also asserts that `/world-land.json` is served from our own origin, that confirmed coordinates round-trip unchanged, and that a trace without coordinates stays listed with null coordinates. It reports 44 of 44 checks passing.
+- `npm run lint`, `./node_modules/.bin/tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass. `tsconfig.json` gained `allowImportingTsExtensions` so the Node-run test file stays type-checked; the project is `noEmit`, so this is safe.
+- Added `docs/production-provisioning-runbook.md` with the exact commands, secret list, migration steps, a 20-item smoke-test table, and an evidence template. Nothing in it was executed.
+
+Production risk recorded rather than acted on:
+
+- `wrangler.jsonc` still binds `DB` to the legacy production database `triptrace` and `MEDIA` to the legacy bucket `triptrace-media`. Local development is unaffected because Wrangler keeps a separate local database, but any `--remote` migration or any deploy would reach legacy production data, which the clean-cut decision explicitly rules out. The bindings must be repointed to fresh resources before either is run. This is flagged, not changed, because creating cloud resources is the owner's call.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -265,6 +292,8 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-01 | Over-cap photo requests are refused rather than truncated | Silently dropping photos let a client exceed the rule without being told |
 | 2026-09-01 | Retention has both an operator endpoint and an opportunistic sweep | A privacy promise that depends only on a correctly configured schedule is not a promise |
 | 2026-09-01 | Maintenance endpoints are closed when their token is unset | A destructive endpoint must fail shut, never open, when configuration is missing |
+| 2026-09-01 | The map renders from a bundled first-party outline instead of third-party tiles | Tile requests would reveal which part of the world a user is viewing to an outside provider, which contradicts the private-by-default promise |
+| 2026-09-01 | First-save activation is counted from a lifetime counter, not the current row count | Otherwise deleting every trace and saving again would double-count activation |
 
 ## Blockers
 

@@ -22,6 +22,12 @@ import { errorResponse, jsonResponse } from "./http";
 import type { SessionUser } from "./auth";
 
 export const METRIC_AI_GENERATION = "ai_generation";
+/**
+ * Lifetime count of successful permanent saves. This is not a limit; it exists so
+ * "first saved trace" stays a once-per-account fact. Deriving it from the current row
+ * count would make the activation event fire again after a user deletes everything.
+ */
+export const METRIC_TRACE_SAVES_TOTAL = "trace_saves_total";
 export const LIFETIME_PERIOD_KEY = "lifetime";
 
 const GUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
@@ -199,6 +205,31 @@ export async function reserveUsage(
   const changed = Number(result.meta?.changes || 0) > 0;
   const used = await readCount(db, subjectKey, periodKey, metricKey);
   return changed ? { ok: true, used } : { ok: false, used };
+}
+
+/**
+ * Unconditional atomic increment that returns the new value.
+ *
+ * Used for counters that record history rather than enforce a cap, so concurrent callers
+ * each observe a distinct value and exactly one of them can see `1`.
+ */
+export async function incrementLifetimeCounter(
+  db: D1Database,
+  subjectKey: string,
+  metricKey: string,
+): Promise<number> {
+  const now = new Date().toISOString();
+  const row = await db
+    .prepare(
+      `INSERT INTO usage_counters (user_id, period_key, metric_key, count, updated_at)
+       VALUES (?1, ?2, ?3, 1, ?4)
+       ON CONFLICT(user_id, period_key, metric_key)
+       DO UPDATE SET count = count + 1, updated_at = ?4
+       RETURNING count`,
+    )
+    .bind(subjectKey, LIFETIME_PERIOD_KEY, metricKey, now)
+    .first<{ count: number }>();
+  return Number(row?.count || 0);
 }
 
 /** Give a reserved unit back when the metered operation did not actually succeed. */

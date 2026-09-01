@@ -14,8 +14,9 @@ Rule:
 2. Run `npx tsc --noEmit`.
 3. Run `npm run build`.
 3a. Apply pending migrations to local D1 with `npx wrangler d1 migrations apply triptrace --local`, then confirm the `d1_migrations` ledger lists every file in `migrations/`.
-3b. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
-3c. Run `npm run qa:cleanup` afterwards and confirm no `qa-entitlements-*` or `qa-gen-quota-*` account remains in local D1.
+3b. Run `npm run test:map`; it needs no server and must report all checks passing.
+3c. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
+3d. Run `npm run qa:cleanup` afterwards and confirm no `qa-entitlements-*` or `qa-gen-quota-*` account remains in local D1.
 4. Test the current change on desktop and mobile widths.
 5. Test signed out and signed in when auth, storage, media, or privacy is affected.
 6. Do not run `npm run build` or `npm run cf:build` while `npm run dev` is still running; both modes write to `.next` and can invalidate development HMR chunks.
@@ -123,7 +124,7 @@ Rule:
 6. Use the search box to filter by title, tag, and place.
 7. Open `/timeline` and confirm traces are grouped by month with a clear selected preview rail.
 8. Click several timeline entries and confirm the selected preview updates without losing the full list.
-9. Open `/map` and confirm the place route appears when traces have places.
+9. Open `/map` and confirm both the coordinate map and the place route appear when traces have places.
 10. Click several places and confirm the selected place summary, trace list, and right preview all update together.
 11. Click a trace inside the selected place and confirm the detail view opens from that moment.
 12. Confirm trace detail separates confirmed facts from the AI-generated story.
@@ -204,6 +205,39 @@ if no schedule is configured.
 6. `POST` again and confirm `deleted` is `0`, so repeating the sweep is safe.
 7. Confirm the response never contains event contents, only counts and the cutoff.
 8. Before production collection begins, confirm a schedule calls this endpoint, or accept the opportunistic sweep and record that decision.
+
+## 9.2 Coordinate Map
+
+The map renders from a bundled outline served by this site. Confirming that is part of the
+test, because the privacy promise depends on it.
+
+1. Open `/map` with the browser Network panel visible and confirm exactly one map data request, `GET /world-land.json`, served from the app origin.
+2. Confirm no request goes to any external map, tile, font, or geocoding host.
+3. With no located traces, confirm the map shows the graticule, says `No confirmed coordinates yet`, and explains how to add coordinates.
+4. Save traces with confirmed latitude and longitude and confirm each appears as a point in the correct part of the world.
+5. Confirm the map fits itself to the located traces on first load rather than showing the whole world at maximum zoom out.
+6. Click a point and confirm the correct trace becomes selected, the right-hand preview updates, the place route highlights the matching place, and the URL gains the matching `?trace=` value.
+7. Click the same point again and confirm the trace detail opens.
+8. Refresh `/map?trace=<trace-id>` and confirm that trace is selected and its point is highlighted.
+9. Save two traces at the same coordinates and confirm they collapse into one point showing the count, and that activating it selects a trace from that spot.
+10. Confirm traces are connected by a dashed line in chronological order, not in the order they were saved.
+11. Drag to pan and confirm the view cannot be dragged outside the world.
+12. Scroll to zoom on desktop and pinch to zoom on a touch device; confirm the point under the cursor stays under the cursor while zooming with the wheel.
+13. Confirm the zoom in, zoom out, and fit buttons work and each has an accessible label.
+14. Tab to a point and press `Enter` and then `Space`; confirm both activate it and the focus ring is visible.
+15. Confirm markers stay a readable size at both the widest and the closest zoom.
+16. Confirm traces without coordinates are not plotted but still appear in the place route and the trace list, with a line stating how many are unlocated.
+17. Confirm the map does not geocode a place name and does not infer coordinates from story text: a trace with a place but no coordinates must not appear as a point.
+18. Block `/world-land.json` in the Network panel and reload; confirm the map still shows points and states that the outline could not be loaded.
+19. Confirm the map is usable at mobile width and does not trap page scrolling outside the map area.
+20. Switch between light and dark themes and confirm land, water, graticule, and points all remain legible.
+
+Automated coverage: `npm run test:map` verifies the projection, view clamping, fitting,
+zoom anchoring, marker grouping, chronological connector, and the bundled outline. Run it
+after any change to `src/lib/atlas-projection.ts` or the outline asset.
+
+If the outline ever needs regenerating, run `npm run build:world-land` against a Natural
+Earth 1:110m land GeoJSON. The output is committed on purpose so builds stay offline.
 
 ## 10. Plans, Quotas, And Server-Side Limits
 

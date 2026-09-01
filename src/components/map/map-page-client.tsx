@@ -8,6 +8,7 @@ import { useMemories, type Memory } from "@/lib/use-memories";
 import { useSelectedTrace } from "@/lib/use-selected-trace";
 import { MemoryDetail } from "@/components/memory/memory-detail";
 import { TracePreviewCard } from "@/components/memory/trace-preview-card";
+import { AtlasMap, type AtlasMapPoint } from "@/components/map/atlas-map";
 
 type PlaceGroup = {
   place: string;
@@ -137,6 +138,29 @@ export function MapPageClient() {
   }, [loading, memories.length]);
 
   const groups = React.useMemo(() => groupByPlace(memories), [memories]);
+  // Only user-confirmed coordinates are plotted. Nothing is geocoded from a place name
+  // and nothing is inferred from story text.
+  const mapPoints = React.useMemo<AtlasMapPoint[]>(
+    () =>
+      memories
+        .filter(
+          (memory) =>
+            Boolean(memory.id) &&
+            typeof memory.latitude === "number" &&
+            typeof memory.longitude === "number" &&
+            Math.abs(memory.latitude) <= 90 &&
+            Math.abs(memory.longitude) <= 180,
+        )
+        .map((memory) => ({
+          id: memory.id as string,
+          label: memory.place?.trim() || memory.title || "Located trace",
+          latitude: memory.latitude as number,
+          longitude: memory.longitude as number,
+          sortKey: new Date(dateValue(memory) || 0).getTime(),
+        })),
+    [memories],
+  );
+  const unlocatedCount = memories.length - mapPoints.length;
   const selectedGroup = React.useMemo(
     () =>
       groups.find((group) => group.items.some((memory) => memory.id === selected?.id)) ||
@@ -210,6 +234,26 @@ export function MapPageClient() {
           </aside>
 
           <section className="space-y-4">
+            <AtlasMap
+              points={mapPoints}
+              selectedId={selected?.id ?? null}
+              onSelect={(traceId) => {
+                const memory = memories.find((item) => item.id === traceId);
+                if (memory) setSelectedPlace(memory.place?.trim() || "Unplaced traces");
+                selectTrace(traceId);
+              }}
+              onOpen={(traceId) => {
+                selectTrace(traceId);
+                setDetailOpen(true);
+              }}
+            />
+            {unlocatedCount > 0 && (
+              <p className="rounded-2xl border border-border bg-card px-4 py-3 text-xs leading-5 text-muted-foreground">
+                {unlocatedCount} {unlocatedCount === 1 ? "trace has" : "traces have"} no confirmed coordinates yet.
+                {" "}
+                They stay reachable in the place route and the list below.
+              </p>
+            )}
             {selectedGroup && (
               <div className="overflow-hidden rounded-2xl border border-border bg-card">
                 {selectedGroup.coverUrl ? (

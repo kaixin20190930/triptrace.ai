@@ -7,9 +7,11 @@ import { randomId } from "@/lib/server/crypto";
 import { rowToMemory, safeParseArray, type MemoryRow } from "@/lib/server/memories";
 import { ENTITLEMENT_CODES } from "@/lib/plans";
 import {
+  METRIC_TRACE_SAVES_TOTAL,
   assertImageCount,
   entitlementDeniedResponse,
   getEntitlements,
+  incrementLifetimeCounter,
   permanentTraceUsage,
 } from "@/lib/server/entitlements";
 
@@ -143,11 +145,6 @@ export async function POST(request: Request) {
 
     const id = randomId("mem_");
     const createdAt = new Date().toISOString();
-    const existingTraceCount = await db
-      .prepare("SELECT COUNT(*) AS count FROM memories WHERE user_id = ?1")
-      .bind(user.id)
-      .first<{ count: number }>();
-    const isFirstTrace = Number(existingTraceCount?.count || 0) === 0;
     // The stored-trace limit is enforced inside the insert statement so two concurrent
     // saves cannot both pass a separate count check and land an extra row.
     const insert = await db
@@ -198,7 +195,15 @@ export async function POST(request: Request) {
       });
     }
 
-    return jsonResponse({ ok: true, memory: { id, createdAt, isFirstTrace } }, 201);
+    // Counted after the insert succeeds, and counted for the lifetime of the account, so
+    // the activation event stays a once-per-user fact even if the user later deletes
+    // every trace and saves again.
+    const lifetimeSaves = await incrementLifetimeCounter(db, user.id, METRIC_TRACE_SAVES_TOTAL);
+
+    return jsonResponse(
+      { ok: true, memory: { id, createdAt, isFirstTrace: lifetimeSaves === 1 } },
+      201,
+    );
   } catch (thrown) {
     if (thrown instanceof HttpError) return thrown.response;
     console.error("memory_create_failed", thrown);

@@ -256,6 +256,52 @@ async function run() {
     `status=${orphanCheck?.status}`,
   );
 
+  // ---------------------------------------------------------------- map data contract
+  const landAsset = await fetch(`${BASE_URL}/world-land.json`);
+  const landBody = landAsset.ok ? await json(landAsset) : null;
+  check(
+    "the map outline is served from our own origin",
+    landAsset.ok && landBody?.format === "flat-lnglat-rings" && Array.isArray(landBody?.rings),
+    `status=${landAsset.status} rings=${landBody?.rings?.length}`,
+  );
+
+  const locatedTrace = await createTrace(owner, {
+    title: "QA located trace",
+    place: "QA Coordinates",
+    latitude: 41.15,
+    longitude: -8.61,
+  });
+  const unlocatedTrace = await createTrace(owner, { title: "QA unlocated trace" });
+  const mapList = await listOwnTraces(owner);
+  const storedLocated = mapList.memories.find((memory) => memory.id === locatedTrace.body?.memory?.id);
+  const storedUnlocated = mapList.memories.find((memory) => memory.id === unlocatedTrace.body?.memory?.id);
+  check(
+    "confirmed coordinates round-trip through the API for the map",
+    storedLocated?.latitude === 41.15 && storedLocated?.longitude === -8.61,
+    `lat=${storedLocated?.latitude} lng=${storedLocated?.longitude}`,
+  );
+  check(
+    "a trace without coordinates stays listed with null coordinates",
+    Boolean(storedUnlocated) && storedUnlocated?.latitude == null && storedUnlocated?.longitude == null,
+    `lat=${storedUnlocated?.latitude} lng=${storedUnlocated?.longitude}`,
+  );
+  // Free the slots again so the limit checks below start from an empty allowance.
+  for (const id of [locatedTrace.body?.memory?.id, unlocatedTrace.body?.memory?.id].filter(Boolean)) {
+    await deleteTrace(owner, id);
+  }
+  const clearedForLimits = await listOwnTraces(owner);
+  check(
+    "the map fixtures are removed before the limit checks",
+    clearedForLimits.memories.length === 0,
+    `count=${clearedForLimits.memories.length}`,
+  );
+  check(
+    "only the very first save of the account was flagged as first",
+    locatedTrace.body?.memory?.isFirstTrace === true &&
+      unlocatedTrace.body?.memory?.isFirstTrace === false,
+    `first=${locatedTrace.body?.memory?.isFirstTrace} second=${unlocatedTrace.body?.memory?.isFirstTrace}`,
+  );
+
   // Fill the free trace allowance exactly.
   let firstTraceFlagCount = 0;
   for (let i = 0; i < freeTraceLimit; i += 1) {
@@ -265,9 +311,11 @@ async function run() {
     if (created.body?.memory?.id) createdTraceIds.push(created.body.memory.id);
     if (created.body?.memory?.isFirstTrace) firstTraceFlagCount += 1;
   }
+  // The account already saved during the map fixtures above, so deleting everything and
+  // saving again must not re-flag a first trace.
   check(
-    "isFirstTrace is reported exactly once per account",
-    firstTraceFlagCount === 1,
+    "emptying the Atlas and saving again does not re-flag a first trace",
+    firstTraceFlagCount === 0,
     `flagged=${firstTraceFlagCount}`,
   );
 
