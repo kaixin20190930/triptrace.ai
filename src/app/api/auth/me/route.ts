@@ -2,7 +2,7 @@ import { requireDb, HttpError } from "@/lib/server/cf";
 import { getSessionUser } from "@/lib/server/auth";
 import { errorResponse, jsonResponse } from "@/lib/server/http";
 
-export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {

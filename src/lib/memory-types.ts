@@ -2,6 +2,7 @@ export type AiMeta = {
   source: "openai" | "mock" | "local" | string;
   model?: string | null;
   reason?: string | null;
+  generatedAt?: string | null;
 };
 
 export type Memory = {
@@ -17,6 +18,16 @@ export type Memory = {
   coverPhotoKey: string | null;
   coverPhotoUrl: string | null;
   ai: AiMeta;
+  isPublic?: boolean;
+  createdAt?: string;
+  eventAt?: string | null;
+  datePrecision?: "exact" | "day" | "month" | "year" | "approximate" | "unknown" | string;
+  factualSummary?: string;
+  people?: string[];
+  latitude?: number | null;
+  longitude?: number | null;
+  factsConfirmedAt?: string | null;
+  _local?: boolean;
   _cloud?: boolean;
   _sourceId?: string;
   _aiStory?: string;

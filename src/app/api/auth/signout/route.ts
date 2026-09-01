@@ -2,7 +2,7 @@ import { requireDb, HttpError } from "@/lib/server/cf";
 import { clearSessionCookie, sessionCookieName } from "@/lib/server/auth";
 import { errorResponse, getCookie, jsonResponse } from "@/lib/server/http";
 
-export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {

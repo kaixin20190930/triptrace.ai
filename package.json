@@ -1,5 +1,5 @@
 {
-  "name": "triptrace-next",
+  "name": "triptrace-ai",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,7 +9,9 @@
     "lint": "eslint",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare preview",
-    "cf:deploy": "opennextjs-cloudflare deploy"
+    "cf:deploy": "opennextjs-cloudflare deploy",
+    "test:api": "node scripts/api-entitlement-tests.mjs",
+    "qa:cleanup": "wrangler d1 execute triptrace --local --file=scripts/qa-cleanup.sql"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

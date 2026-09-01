@@ -23,7 +23,7 @@ function getByPath(obj: unknown, path: string): unknown {
 }
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguageState] = React.useState<Language>("zh");
+  const [language, setLanguageState] = React.useState<Language>("en");
 
   React.useEffect(() => {
     // Hydrate from localStorage after mount (SSR has no window) — this is a one-time

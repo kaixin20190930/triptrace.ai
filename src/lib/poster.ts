@@ -108,9 +108,75 @@ export function slugify(value: string): string {
 
 function collectPosterPhotos(memory: Memory): string[] {
   const urls = [...(memory.photoUrls || []), memory.coverPhotoUrl].filter(
-    (src): src is string => Boolean(src) && !src!.startsWith("blob:"),
+    (src): src is string => Boolean(src),
   );
-  return [...new Set(urls)].slice(0, 3);
+  return [...new Set(urls)].slice(0, 4);
+}
+
+function drawCoverImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  const scale = Math.max(width / image.width, height / image.height);
+  const drawWidth = image.width * scale;
+  const drawHeight = image.height * scale;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+  ctx.drawImage(
+    image,
+    x + (width - drawWidth) / 2,
+    y + (height - drawHeight) / 2,
+    drawWidth,
+    drawHeight,
+  );
+  ctx.restore();
+}
+
+function drawPhotoCollage(
+  ctx: CanvasRenderingContext2D,
+  images: HTMLImageElement[],
+  width: number,
+  height: number,
+) {
+  const gap = 4;
+  if (images.length === 1) {
+    drawCoverImage(ctx, images[0], 0, 0, width, height);
+    return;
+  }
+  if (images.length === 2) {
+    const cellWidth = (width - gap) / 2;
+    drawCoverImage(ctx, images[0], 0, 0, cellWidth, height);
+    drawCoverImage(ctx, images[1], cellWidth + gap, 0, cellWidth, height);
+    return;
+  }
+  if (images.length === 3) {
+    const leadWidth = Math.round(width * 0.62);
+    const sideWidth = width - leadWidth - gap;
+    const sideHeight = (height - gap) / 2;
+    drawCoverImage(ctx, images[0], 0, 0, leadWidth, height);
+    drawCoverImage(ctx, images[1], leadWidth + gap, 0, sideWidth, sideHeight);
+    drawCoverImage(ctx, images[2], leadWidth + gap, sideHeight + gap, sideWidth, sideHeight);
+    return;
+  }
+
+  const cellWidth = (width - gap) / 2;
+  const cellHeight = (height - gap) / 2;
+  images.slice(0, 4).forEach((image, index) => {
+    drawCoverImage(
+      ctx,
+      image,
+      (index % 2) * (cellWidth + gap),
+      Math.floor(index / 2) * (cellHeight + gap),
+      cellWidth,
+      cellHeight,
+    );
+  });
 }
 
 export type PosterOptions = {
@@ -232,17 +298,8 @@ export async function downloadMemoryPoster(memory: Memory, opts: PosterOptions):
 
   if (photos.length) {
     try {
-      const img = await loadImage(photos[0]);
-      const aspect = img.width / img.height;
-      let dw = W;
-      let dh = W / aspect;
-      if (dh < photoH) {
-        dh = photoH;
-        dw = photoH * aspect;
-      }
-      const dx = (W - dw) / 2;
-      const dy = (photoH - dh) / 2;
-      ctx.drawImage(img, dx, dy, dw, dh);
+      const images = await Promise.all(photos.map(loadImage));
+      drawPhotoCollage(ctx, images, W, photoH);
 
       const grad = ctx.createLinearGradient(0, photoH * 0.35, 0, photoH);
       grad.addColorStop(0, "rgba(18,10,0,0)");

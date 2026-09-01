@@ -23,6 +23,16 @@ export type MemoryRow = {
   cover_photo_key: string | null;
   is_public: number;
   created_at: string;
+  event_at: string | null;
+  date_precision: string;
+  factual_summary: string | null;
+  people_json: string;
+  latitude: number | null;
+  longitude: number | null;
+  facts_confirmed_at: string | null;
+  ai_source: string | null;
+  ai_model: string | null;
+  ai_generated_at: string | null;
   user_id: string;
   display_name: string;
 };
@@ -41,6 +51,18 @@ export function rowToMemory(row: MemoryRow) {
     coverPhotoUrl: row.cover_photo_key ? buildMediaUrl(row.cover_photo_key) : null,
     isPublic: row.is_public !== 0,
     createdAt: row.created_at,
+    eventAt: row.event_at,
+    datePrecision: row.date_precision,
+    factualSummary: row.factual_summary ?? "",
+    people: safeParseArray(row.people_json),
+    latitude: row.latitude,
+    longitude: row.longitude,
+    factsConfirmedAt: row.facts_confirmed_at,
+    ai: {
+      source: row.ai_source || "unknown",
+      model: row.ai_model,
+      generatedAt: row.ai_generated_at,
+    },
     user: { id: row.user_id, displayName: row.display_name },
   };
 }

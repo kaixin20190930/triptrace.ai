@@ -1,10 +1,34 @@
+import type { R2Bucket } from "@cloudflare/workers-types";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { requireDb, HttpError } from "@/lib/server/cf";
 import { getSessionUser } from "@/lib/server/auth";
 import { errorResponse, jsonResponse, readJson } from "@/lib/server/http";
 import { randomId } from "@/lib/server/crypto";
-import { rowToMemory, type MemoryRow } from "@/lib/server/memories";
+import { rowToMemory, safeParseArray, type MemoryRow } from "@/lib/server/memories";
+import { ENTITLEMENT_CODES } from "@/lib/plans";
+import {
+  assertImageCount,
+  entitlementDeniedResponse,
+  getEntitlements,
+  permanentTraceUsage,
+} from "@/lib/server/entitlements";
 
-export const runtime = "edge";
+export const dynamic = "force-dynamic";
+
+async function requireBucket(): Promise<R2Bucket> {
+  const { env } = await getCloudflareContext({ async: true });
+  const bucket = (env as unknown as { MEDIA?: R2Bucket }).MEDIA;
+  if (!bucket) {
+    throw new HttpError(errorResponse("MEDIA bucket is not configured", 500, "media_bucket_missing"));
+  }
+  return bucket;
+}
+
+function uniqueMediaKeys(photoKeysJson: string | null, coverPhotoKey: string | null) {
+  return Array.from(
+    new Set([...safeParseArray(photoKeysJson), coverPhotoKey].map((key) => String(key || "").trim()).filter(Boolean)),
+  );
+}
 
 export async function GET(request: Request) {
   try {
@@ -20,7 +44,10 @@ export async function GET(request: Request) {
         .prepare(
           `SELECT memories.id, memories.title, memories.story, memories.place, memories.mood, memories.tags_json,
                   memories.photo_keys_json, memories.cover_photo_key, memories.is_public,
-                  memories.created_at, users.id AS user_id, users.display_name
+                  memories.created_at, memories.event_at, memories.date_precision,
+                  memories.factual_summary, memories.people_json, memories.latitude, memories.longitude,
+                  memories.facts_confirmed_at, memories.ai_source, memories.ai_model, memories.ai_generated_at,
+                  users.id AS user_id, users.display_name
            FROM memories
            JOIN users ON users.id = memories.user_id
            WHERE memories.user_id = ?1
@@ -34,7 +61,10 @@ export async function GET(request: Request) {
         .prepare(
           `SELECT memories.id, memories.title, memories.story, memories.place, memories.mood, memories.tags_json,
                   memories.photo_keys_json, memories.cover_photo_key, memories.is_public,
-                  memories.created_at, users.id AS user_id, users.display_name
+                  memories.created_at, memories.event_at, memories.date_precision,
+                  memories.factual_summary, memories.people_json, memories.latitude, memories.longitude,
+                  memories.facts_confirmed_at, memories.ai_source, memories.ai_model, memories.ai_generated_at,
+                  users.id AS user_id, users.display_name
            FROM memories
            JOIN users ON users.id = memories.user_id
            WHERE memories.is_public = 1
@@ -61,6 +91,14 @@ type CreateBody = {
   photoKeys?: string[];
   coverPhotoKey?: string;
   isPublic?: boolean;
+  eventAt?: string | null;
+  datePrecision?: string;
+  factualSummary?: string;
+  people?: string[];
+  latitude?: number | null;
+  longitude?: number | null;
+  factsConfirmed?: boolean;
+  ai?: { source?: string; model?: string | null };
 };
 
 export async function POST(request: Request) {
@@ -76,21 +114,53 @@ export async function POST(request: Request) {
     const mood = String(body?.mood || "").trim();
     const tags = Array.isArray(body?.tags) ? body.tags.map((x) => String(x).trim()).filter(Boolean) : [];
     const photoKeys = Array.isArray(body?.photoKeys)
-      ? body.photoKeys.map((x) => String(x).trim()).filter(Boolean).slice(0, 6)
+      ? body.photoKeys.map((x) => String(x).trim()).filter(Boolean)
       : [];
     const coverPhotoKey = String(body?.coverPhotoKey || photoKeys[0] || "").trim() || null;
-    const isPublic = body?.isPublic !== false ? 1 : 0;
+    const isPublic = body?.isPublic === true ? 1 : 0;
+    const eventAt = String(body?.eventAt || "").trim() || null;
+    const datePrecision = String(body?.datePrecision || (eventAt ? "day" : "unknown")).trim();
+    const factualSummary = String(body?.factualSummary || "").trim();
+    const people = Array.isArray(body?.people)
+      ? body.people.map((person) => String(person).trim()).filter(Boolean).slice(0, 30)
+      : [];
+    const latitude = Number.isFinite(body?.latitude) ? Number(body?.latitude) : null;
+    const longitude = Number.isFinite(body?.longitude) ? Number(body?.longitude) : null;
+    const factsConfirmedAt = body?.factsConfirmed === true ? new Date().toISOString() : null;
+    const aiSource = String(body?.ai?.source || "").trim() || null;
+    const aiModel = String(body?.ai?.model || "").trim() || null;
 
     if (!title || !story) {
       return errorResponse("title and story are required", 400, "missing_fields");
     }
+    if (!factsConfirmedAt) {
+      return errorResponse("Confirm the trace facts before saving", 400, "facts_not_confirmed");
+    }
+
+    const entitlements = await getEntitlements(db, user, request);
+    const imageDenial = assertImageCount(entitlements, photoKeys.length);
+    if (imageDenial) return imageDenial;
 
     const id = randomId("mem_");
     const createdAt = new Date().toISOString();
-    await db
+    const existingTraceCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM memories WHERE user_id = ?1")
+      .bind(user.id)
+      .first<{ count: number }>();
+    const isFirstTrace = Number(existingTraceCount?.count || 0) === 0;
+    // The stored-trace limit is enforced inside the insert statement so two concurrent
+    // saves cannot both pass a separate count check and land an extra row.
+    const insert = await db
       .prepare(
-        `INSERT INTO memories (id, user_id, title, story, place, mood, tags_json, photo_keys_json, cover_photo_key, is_public, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+        `INSERT INTO memories (
+           id, user_id, title, story, place, mood, tags_json, photo_keys_json, cover_photo_key,
+           is_public, created_at, event_at, date_precision, factual_summary, people_json,
+           latitude, longitude, facts_confirmed_at, ai_source, ai_model, ai_generated_at
+         )
+         SELECT
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+           ?16, ?17, ?18, ?19, ?20, ?21
+         WHERE (SELECT COUNT(*) FROM memories WHERE user_id = ?2) < ?22`,
       )
       .bind(
         id,
@@ -104,12 +174,34 @@ export async function POST(request: Request) {
         coverPhotoKey,
         isPublic,
         createdAt,
+        eventAt,
+        datePrecision,
+        factualSummary || null,
+        JSON.stringify(people),
+        latitude,
+        longitude,
+        factsConfirmedAt,
+        aiSource,
+        aiModel,
+        aiSource === "openai" ? createdAt : null,
+        entitlements.limits.permanentTraces,
       )
       .run();
 
-    return jsonResponse({ ok: true, memory: { id, createdAt } }, 201);
+    if (Number(insert.meta?.changes || 0) === 0) {
+      const current = await permanentTraceUsage(db, entitlements);
+      return entitlementDeniedResponse({
+        code: ENTITLEMENT_CODES.traceLimitReached,
+        planKey: entitlements.planKey,
+        limit: current.limit,
+        used: current.used,
+      });
+    }
+
+    return jsonResponse({ ok: true, memory: { id, createdAt, isFirstTrace } }, 201);
   } catch (thrown) {
     if (thrown instanceof HttpError) return thrown.response;
+    console.error("memory_create_failed", thrown);
     return errorResponse("Failed to create memory", 500, "memory_create_failed");
   }
 }
@@ -162,8 +254,49 @@ export async function PATCH(request: Request) {
       updates.push(`mood = ?${i++}`);
       binds.push(String(body.mood || "").trim() || null);
     }
+    const touchesFacts =
+      "eventAt" in body ||
+      "datePrecision" in body ||
+      "factualSummary" in body ||
+      "people" in body ||
+      "latitude" in body ||
+      "longitude" in body;
+    if (touchesFacts && body.factsConfirmed !== true) {
+      return errorResponse("Confirm the trace facts before saving", 400, "facts_not_confirmed");
+    }
+    if ("eventAt" in body) {
+      updates.push(`event_at = ?${i++}`);
+      binds.push(String(body.eventAt || "").trim() || null);
+    }
+    if ("datePrecision" in body) {
+      updates.push(`date_precision = ?${i++}`);
+      binds.push(String(body.datePrecision || "").trim() || "unknown");
+    }
+    if ("factualSummary" in body) {
+      updates.push(`factual_summary = ?${i++}`);
+      binds.push(String(body.factualSummary || "").trim() || null);
+    }
+    if ("people" in body && Array.isArray(body.people)) {
+      updates.push(`people_json = ?${i++}`);
+      binds.push(JSON.stringify(body.people.map((person) => String(person).trim()).filter(Boolean).slice(0, 30)));
+    }
+    if ("latitude" in body) {
+      updates.push(`latitude = ?${i++}`);
+      binds.push(Number.isFinite(body.latitude) ? Number(body.latitude) : null);
+    }
+    if ("longitude" in body) {
+      updates.push(`longitude = ?${i++}`);
+      binds.push(Number.isFinite(body.longitude) ? Number(body.longitude) : null);
+    }
+    if (touchesFacts || body.factsConfirmed === true) {
+      updates.push(`facts_confirmed_at = ?${i++}`);
+      binds.push(new Date().toISOString());
+    }
     if ("photoKeys" in body && Array.isArray(body.photoKeys)) {
-      const keys = body.photoKeys.map((x) => String(x).trim()).filter(Boolean).slice(0, 6);
+      const keys = body.photoKeys.map((x) => String(x).trim()).filter(Boolean);
+      const patchEntitlements = await getEntitlements(db, user, request);
+      const patchImageDenial = assertImageCount(patchEntitlements, keys.length);
+      if (patchImageDenial) return patchImageDenial;
       updates.push(`photo_keys_json = ?${i++}`);
       binds.push(JSON.stringify(keys));
       if (!("coverPhotoKey" in body)) {
@@ -188,5 +321,47 @@ export async function PATCH(request: Request) {
   } catch (thrown) {
     if (thrown instanceof HttpError) return thrown.response;
     return errorResponse("Failed to update memory", 500, "memory_update_failed");
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const db = await requireDb();
+    const user = await getSessionUser(db, request);
+    if (!user) return errorResponse("Authentication required", 401, "unauthorized");
+
+    const url = new URL(request.url);
+    const memoryId = String(url.searchParams.get("memoryId") || "").trim();
+    if (!memoryId) return errorResponse("memoryId is required", 400, "missing_memory_id");
+
+    const existing = await db
+      .prepare("SELECT id, user_id, photo_keys_json, cover_photo_key FROM memories WHERE id = ?1")
+      .bind(memoryId)
+      .first<{ id: string; user_id: string; photo_keys_json: string | null; cover_photo_key: string | null }>();
+    if (!existing) return errorResponse("memory not found", 404, "memory_not_found");
+    if (existing.user_id !== user.id) return errorResponse("not allowed", 403, "forbidden");
+
+    const mediaKeys = uniqueMediaKeys(existing.photo_keys_json, existing.cover_photo_key);
+
+    await db.prepare("DELETE FROM comments WHERE memory_id = ?1").bind(memoryId).run();
+    await db.prepare("DELETE FROM memories WHERE id = ?1 AND user_id = ?2").bind(memoryId, user.id).run();
+
+    let mediaCleanupFailed = false;
+    if (mediaKeys.length > 0) {
+      try {
+        const bucket = await requireBucket();
+        await bucket.delete(mediaKeys);
+      } catch {
+        mediaCleanupFailed = true;
+      }
+    }
+
+    return jsonResponse({
+      ok: true,
+      deleted: { memoryId, mediaKeys: mediaKeys.length, mediaCleanupFailed },
+    });
+  } catch (thrown) {
+    if (thrown instanceof HttpError) return thrown.response;
+    return errorResponse("Failed to delete memory", 500, "memory_delete_failed");
   }
 }

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { trackEvent } from "@/lib/analytics";
 import { useAuth } from "@/lib/auth-context";
 import { useLanguage } from "@/lib/i18n";
 import {
@@ -21,18 +22,31 @@ export function AccountDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState("");
 
   async function handleSubmit(mode: "signin" | "signup") {
+    setError("");
     setPending(true);
+    if (mode === "signup") {
+      trackEvent("signup_started", { source: "account_dialog" });
+    }
     const result = mode === "signin" ? await signIn(email, password) : await signUp(email, password);
     setPending(false);
     if (result.ok) {
-      toast.success(mode === "signin" ? t("auth.signin") : t("auth.signup"));
+      if (mode === "signup") {
+        trackEvent("signup_completed", { source: "account_dialog" });
+      }
+      const pendingDraft = window.sessionStorage.getItem("triptrace-pending-draft");
+      if (pendingDraft) {
+        toast.success("Signed in. Your draft is ready for private save.");
+      } else {
+        toast.success(mode === "signin" ? t("auth.signin") : t("auth.signup"));
+      }
       onOpenChange(false);
       setEmail("");
       setPassword("");
     } else {
-      toast.error(result.error?.message || "Request failed");
+      setError(result.error?.message || "Request failed");
     }
   }
 
@@ -79,6 +93,11 @@ export function AccountDialog({ open, onOpenChange }: { open: boolean; onOpenCha
             </TabsContent>
           ))}
         </Tabs>
+        {error && (
+          <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   );

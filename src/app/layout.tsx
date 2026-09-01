@@ -1,29 +1,52 @@
 import type { Metadata } from "next";
-import { Noto_Serif_SC, Noto_Sans_SC } from "next/font/google";
+import { Cormorant_Garamond, Manrope } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/lib/auth-context";
 import { LanguageProvider } from "@/lib/i18n";
 
-const notoSerifSC = Noto_Serif_SC({
+const displayFont = Cormorant_Garamond({
   variable: "--font-serif",
   subsets: ["latin"],
-  weight: "700",
+  weight: ["600", "700"],
   display: "swap",
 });
 
-const notoSansSC = Noto_Sans_SC({
+const bodyFont = Manrope({
   variable: "--font-sans",
   subsets: ["latin"],
-  weight: ["400", "600"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "TripTrace.ai | AI 记录人生旅迹",
+  metadataBase: new URL("https://triptrace.ai"),
+  title: {
+    default: "TripTrace.ai | Turn memories into a living Life Atlas",
+    template: "%s | TripTrace.ai",
+  },
   description:
-    "TripTrace.ai 用 AI 帮你把照片、文字、地点和心情整理成可搜索、可分享的人生旅迹，适合记录旅行、家庭和关系中的重要片段。",
+    "Turn scattered photos and notes into a private, searchable map and timeline of your life. Every trip leaves traces. Every trace tells a story.",
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "TripTrace.ai",
+    title: "TripTrace.ai | Turn memories into a living Life Atlas",
+    description:
+      "Turn scattered photos and notes into a private, searchable map and timeline of your life.",
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "TripTrace.ai | Turn memories into a living Life Atlas",
+    description:
+      "Turn scattered photos and notes into a private, searchable map and timeline of your life.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
@@ -33,8 +56,8 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="zh-CN"
-      className={`${notoSerifSC.variable} ${notoSansSC.variable} h-full antialiased`}
+      lang="en"
+      className={`${displayFont.variable} ${bodyFont.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col font-sans">

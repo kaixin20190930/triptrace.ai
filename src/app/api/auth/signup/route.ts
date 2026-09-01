@@ -4,7 +4,7 @@ import { buildSessionCookie, createSession } from "@/lib/server/auth";
 import { errorResponse, jsonResponse, readJson } from "@/lib/server/http";
 import { checkRateLimit } from "@/lib/server/rate-limit";
 
-export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {

@@ -1,15 +1,31 @@
+import type { D1Database } from "@cloudflare/workers-types";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { getSessionUser } from "@/lib/server/auth";
-import { requireDb } from "@/lib/server/cf";
+import { getSessionUser, type SessionUser } from "@/lib/server/auth";
+import { HttpError, requireDb } from "@/lib/server/cf";
+import { checkRateLimit } from "@/lib/server/rate-limit";
+import { ENTITLEMENT_CODES } from "@/lib/plans";
+import {
+  METRIC_AI_GENERATION,
+  assertImageCount,
+  entitlementDeniedResponse,
+  getEntitlements,
+  releaseUsage,
+  reserveUsage,
+} from "@/lib/server/entitlements";
 
-export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 type GenerateInput = {
   moment?: string;
   place?: string;
   mood?: string;
   moodLabel?: string;
+  images?: string[];
   stream?: boolean;
+  /** Total photos attached to the draft, which may exceed the bounded vision subset. */
+  photoCount?: number;
+  /** Local guest device identifier, used only to meter the anonymous AI demo. */
+  guestId?: string;
 };
 
 type PersonaDerived = {
@@ -22,10 +38,19 @@ type PersonaDerived = {
 
 type Persona = { derivedPersona?: PersonaDerived; sampleText?: string };
 
-function jsonRes(body: unknown, status = 200) {
+function normalizeImages(images: unknown): string[] | null {
+  if (images === undefined) return [];
+  if (!Array.isArray(images) || images.length > 4) return null;
+  const normalized = images.map((image) => String(image));
+  const dataImagePattern = /^data:image\/(?:jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/;
+  if (normalized.some((image) => image.length > 5_000_000 || !dataImagePattern.test(image))) return null;
+  return normalized;
+}
+
+function jsonRes(body: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { "Content-Type": "application/json; charset=utf-8", ...headers },
   });
 }
 
@@ -34,21 +59,21 @@ function withAiMeta(memory: unknown, ai: { source: string; model?: string | null
 }
 
 function createMockMemory(input: GenerateInput) {
-  const place = (input.place || "").split(/[·•·,，]/)[0].trim() || "某个地方";
-  const moodLabel = input.moodLabel || input.mood || "平静";
+  const place = (input.place || "").split(/[·•,，]/)[0].trim() || "A place to confirm";
+  const moodLabel = input.moodLabel || input.mood || "A feeling to confirm";
   const moment = (input.moment || "").trim();
-  const firstSentence = moment.split(/[。！？.!?]/)[0].slice(0, 40) || moment.slice(0, 40);
+  const firstSentence =
+    moment.split(/[。！？.!?]/)[0].slice(0, 90) ||
+    "These photos hold a moment whose details are still yours to confirm";
   return {
-    title: `${place}，${moodLabel}的某个下午`,
-    story: `${firstSentence}。${place}的空气里有什么，说不清楚，只是站在那里觉得还好。没什么大事，也没有要特别记住的理由——但你还是拿出手机，想把这个时刻存下来。这件事本身，也许就是它值得被记住的原因。`,
-    tags: [place, moodLabel, "日常", moment.includes("家人") || moment.includes("爸") || moment.includes("妈") ? "家人" : "独处时刻"],
+    title: moment ? `${place}, a moment to keep` : "A photo trace to complete",
+    story: `${firstSentence}. Review the time, place, people, and story before keeping this trace.`,
+    tags: [place, moodLabel, "photo trace", "needs review"],
   };
 }
 
-async function buildPersonaBlock(request: Request): Promise<string> {
+async function buildPersonaBlock(db: D1Database, user: SessionUser | null): Promise<string> {
   try {
-    const db = await requireDb();
-    const user = await getSessionUser(db, request);
     if (!user) return "";
     const row = await db
       .prepare("SELECT persona_json FROM users WHERE id = ?1")
@@ -77,65 +102,117 @@ async function buildPersonaBlock(request: Request): Promise<string> {
 }
 
 export async function POST(request: Request) {
-  const input = (await request.json().catch(() => null)) as GenerateInput | null;
-  if (!input?.moment) {
-    return jsonRes({ error: "moment is required" }, 400);
+  try {
+    return await handleGenerate(request);
+  } catch (thrown) {
+    if (thrown instanceof HttpError) return thrown.response;
+    console.error("generate_memory_failed", thrown);
+    return jsonRes({ error: { code: "generation_failed", message: "Generation failed." } }, 500);
   }
+}
+
+async function handleGenerate(request: Request) {
+  const input = (await request.json().catch(() => null)) as GenerateInput | null;
+  if (!input || (!input.moment?.trim() && !input.images?.length)) {
+    return jsonRes({ error: "Add words, photos, or both." }, 400);
+  }
+  const images = normalizeImages(input.images);
+  if (!images) {
+    return jsonRes({ error: "Images must be bounded JPEG, PNG, or WebP data URLs." }, 400);
+  }
+
+  const db = await requireDb();
+  const user = await getSessionUser(db, request);
+
+  // Coarse IP throttle. It does not replace the plan quota; it stops a caller from
+  // churning guest device ids or hammering the route while a quota check is in flight.
+  const throttled = await checkRateLimit(
+    db,
+    request,
+    user ? "generate_memory_user" : "generate_memory_guest",
+    user ? 60 : 10,
+    60 * 60 * 1_000,
+  );
+  if (throttled) return throttled;
+
+  const entitlements = await getEntitlements(db, user, request, input.guestId);
+
+  const declaredPhotoCount = Number.isFinite(input.photoCount) ? Number(input.photoCount) : 0;
+  const photoCount = Math.max(declaredPhotoCount, images.length);
+  const imageDenial = assertImageCount(entitlements, photoCount);
+  if (imageDenial) return imageDenial;
 
   const { env } = await getCloudflareContext({ async: true });
   const apiKey = (env as unknown as { OPENAI_API_KEY?: string }).OPENAI_API_KEY;
   const model = (env as unknown as { OPENAI_MODEL?: string }).OPENAI_MODEL || "gpt-5.2";
 
   if (!apiKey) {
-    return jsonRes(withAiMeta(createMockMemory(input), { source: "mock", model, reason: "missing_openai_api_key" }));
+    // No provider call happens, so no allowance is spent on a local fallback draft.
+    return jsonRes(
+      withAiMeta(createMockMemory(input), {
+        source: "mock",
+        reason: "missing_openai_api_key",
+      }),
+    );
   }
 
-  const personaBlock = await buildPersonaBlock(request);
+  // Claim the allowance before spending money upstream, then hand it back below if the
+  // provider call does not produce a usable draft.
+  const reservation = await reserveUsage(
+    db,
+    entitlements.subjectKey,
+    entitlements.aiPeriodKey,
+    METRIC_AI_GENERATION,
+    entitlements.limits.aiGenerations,
+  );
+  if (!reservation.ok) {
+    return entitlementDeniedResponse({
+      code: entitlements.signedIn
+        ? ENTITLEMENT_CODES.generationLimitReached
+        : ENTITLEMENT_CODES.guestDemoUsed,
+      planKey: entitlements.planKey,
+      limit: entitlements.limits.aiGenerations,
+      used: reservation.used,
+    });
+  }
+
+  const refund = () =>
+    releaseUsage(db, entitlements.subjectKey, entitlements.aiPeriodKey, METRIC_AI_GENERATION);
+
+  const personaBlock = await buildPersonaBlock(db, user);
   const moodLabel = input.moodLabel || input.mood || "";
 
   const prompt = [
-    "你是 TripTrace.ai 的人生记忆整理助手。",
-    "把用户的生活碎片整理成一张安静、真实、有画面感的记忆卡片。",
-    "",
-    "【写作规则——逐条严格执行】",
-    "1. 克制，不煽情。像懂得留白的旁白，不是日记也不是散文。",
-    "2. 只用具体的感官细节（光线/气味/声音/温度/触感）描述场景，不用情绪词替代感受。",
-    "3. story 首句直接入场景（不要铺垫，不要交代背景），结尾留白或悬而未决。",
-    "4. 【硬性禁止，出现即失败】：",
-    "   - 禁止任何升华句：「值得珍惜」「美好时光」「难忘的」「充满意义」「人生里」「真正重要」「记住这一刻」「感谢」「幸福」「珍贵」",
-    "   - 禁止道理/感悟：不能在结尾总结「所以……」「原来……」「这才明白……」",
-    "   - 禁止点题：不能解释这件事为什么值得记录",
-    "5. tags 只用能「拍成照片」的具体名词或短语。",
-    "   禁止：温暖、珍贵、意义、成长、平静、感动、美好、值得保存、独处时刻、难忘",
-    "   允许：茶馆、下雨天、陪爸妈、渡月桥、抹茶、早上九点、碎石路、吉他声",
-    "",
-    "【格式】",
-    "标题：≤ 18 字，像一帧画面的注脚，不用感叹号",
-    "story：100–150 字",
-    "tags：4–6 个具体词",
-    "",
-    "---",
-    "【示例】",
-    "输入：今天和爸妈在杭州西湖散步，下午下了一点雨，我们在湖边喝茶，突然觉得这些平常的时间很珍贵。",
-    "地点：杭州·西湖 | 心情：温暖",
-    "",
-    '输出：{"title":"下雨的西湖，茶还没喝完","story":"雨是突然下的，细细的，落在湖面上没有声音。茶馆的椅子有点潮，爸爸撑着伞没怎么动，妈妈在说什么，你没完全听进去，只是觉得坐在这里还不错。龙井泡了第三道，颜色已经很淡了，没有人提起要走。","tags":["西湖","下雨天","陪爸妈","湖边茶馆","下午时光"]}',
-    "",
-    "注意示例中：结尾「没有人提起要走」——没有升华，没有感悟，只是一个事实。",
-    "---",
+    "You are the drafting assistant for TripTrace.ai, an English-first AI Life Atlas.",
+    "Turn the user's words and photos into a restrained, specific memory draft.",
+    "Never invent or silently correct time, location, identity, relationships, or what happened.",
+    "If a fact is not supplied or visually certain, leave it out. Do not infer sensitive traits.",
+    "Describe only visible details from images and explicit details from the user's note.",
+    "Open directly in the scene. Avoid clichés, life lessons, sentimentality, and explaining why the moment matters.",
+    "Write a title under 12 words, a story of 80-140 words, and 4-6 concrete tags.",
+    "The result is a draft. The user will confirm facts before saving.",
     personaBlock,
-    `地点：${input.place || "未指定"}`,
-    `心情：${moodLabel || "未指定"}`,
-    `用户记录：${input.moment}`,
+    `Place supplied by user: ${input.place || "not supplied"}`,
+    `Mood supplied by user: ${moodLabel || "not supplied"}`,
+    `User note: ${input.moment || "No note supplied; rely only on visible image details."}`,
   ]
     .filter((s) => s !== undefined)
     .join("\n");
 
   const useStream = input.stream === true;
 
+  const imageContent = images.map((imageUrl) => ({
+    type: "input_image",
+    image_url: imageUrl,
+  }));
   const requestBody = {
     model,
-    input: prompt,
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: prompt }, ...imageContent],
+      },
+    ],
     stream: useStream,
     text: {
       format: {
@@ -156,15 +233,38 @@ export async function POST(request: Request) {
     },
   };
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(requestBody),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+  } catch {
+    await refund();
+    return jsonRes(
+      withAiMeta(createMockMemory(input), {
+        source: "mock",
+        reason: "openai_unreachable",
+      }),
+    );
+  }
 
   if (!response.ok) {
-    return jsonRes(withAiMeta(createMockMemory(input), { source: "mock", model, reason: `openai_http_${response.status}` }));
+    await refund();
+    return jsonRes(
+      withAiMeta(createMockMemory(input), {
+        source: "mock",
+        reason: `openai_http_${response.status}`,
+      }),
+    );
   }
+
+  const usageHeaders = {
+    "X-TripTrace-Usage-Used": String(reservation.used),
+    "X-TripTrace-Usage-Limit": String(entitlements.limits.aiGenerations),
+    "X-TripTrace-Plan": entitlements.planKey,
+  };
 
   if (useStream) {
     return new Response(response.body, {
@@ -172,6 +272,9 @@ export async function POST(request: Request) {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
+        "X-TripTrace-AI-Source": "openai",
+        "X-TripTrace-AI-Model": model,
+        ...usageHeaders,
       },
     });
   }
@@ -180,12 +283,27 @@ export async function POST(request: Request) {
   const text = data.output_text || data.output?.[0]?.content?.[0]?.text;
 
   try {
-    return jsonRes(withAiMeta(JSON.parse(text || ""), { source: "openai", model }));
+    return jsonRes(withAiMeta(JSON.parse(text || ""), { source: "openai", model }), 200, usageHeaders);
   } catch {
-    return jsonRes(withAiMeta(createMockMemory(input), { source: "mock", model, reason: "openai_parse_failed" }));
+    await refund();
+    return jsonRes(
+      withAiMeta(createMockMemory(input), {
+        source: "mock",
+        reason: "openai_parse_failed",
+      }),
+    );
   }
 }
 
 export async function GET() {
-  return jsonRes({ ok: true, service: "TripTrace.ai memory generation", provider: "OpenAI GPT on Cloudflare Workers" });
+  const { env } = await getCloudflareContext({ async: true });
+  const configured = Boolean(
+    (env as unknown as { OPENAI_API_KEY?: string }).OPENAI_API_KEY,
+  );
+  return jsonRes({
+    ok: true,
+    service: "TripTrace.ai memory generation",
+    provider: configured ? "OpenAI" : null,
+    configured,
+  });
 }
