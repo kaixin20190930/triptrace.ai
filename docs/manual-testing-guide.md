@@ -29,8 +29,8 @@ Rule:
 
 | Command | Needs a server | Needs secrets | What it covers |
 |---|---|---|---|
-| `npm run test:unit` | no | no | Map projection and geometry, Stripe signature and event mapping, checkout payload |
-| `npm run test:api` | yes | optional | Privacy, ownership, deletion, entitlements, quotas, concurrency, retention endpoint |
+| `npm run test:unit` | no | no | Map projection and geometry, Stripe signatures and event mapping, checkout payload, media retry schedule |
+| `npm run test:api` | yes | optional | Privacy, ownership, deletion, entitlements, quotas, concurrency, media cleanup queue, retention endpoint |
 | `npm run test:billing` | yes | optional | Webhook signatures, idempotency, event ordering, plan transitions, billing analytics |
 | `npm run test:e2e` | starts its own | no | Applies local migrations, runs both HTTP suites, removes its test data |
 | `npm run test:all` | starts its own | no | Lint, types, unit suites, then `test:e2e` |
@@ -257,6 +257,23 @@ after any change to `src/lib/atlas-projection.ts` or the outline asset.
 
 If the outline ever needs regenerating, run `npm run build:world-land` against a Natural
 Earth 1:110m land GeoJSON. The output is committed on purpose so builds stay offline.
+
+## 8.1 Media Deletion And Retry
+
+Deleting a trace removes the database row immediately, which is what makes its photos
+unreachable: media access is authorised by looking up a referencing trace. Removing the R2
+object is a second step that can fail, so failures are queued and retried.
+
+1. Delete a trace with photos and confirm the response reports the media key count, `mediaCleanupFailed: false`, and nothing queued.
+2. Reload a previously copied media URL for that trace and confirm it no longer returns the image.
+3. Call `GET /api/admin/media/cleanup` with the operator token and confirm the queue is empty and `needsAttention` is false.
+4. Call it without a token and confirm `403`, or `503` when `ADMIN_TASK_TOKEN` is unset.
+5. Confirm the report contains only counts and timestamps, never media keys. A key identifies a specific private photo.
+6. To exercise the retry path, insert a `media_cleanup_queue` row for a real uploaded key with `next_attempt_at` in the past, then `POST /api/admin/media/cleanup` and confirm the object is deleted and the row is cleared.
+7. Insert a queue row for a key that a surviving trace still references, sweep, and confirm the object is **not** deleted and the row is dropped instead. A live memory must never lose its photo to the queue.
+8. Sweep an empty queue and confirm it is a safe no-op.
+9. If `abandoned` is ever above zero, confirm `needsAttention` is true. Those keys have exhausted their retries and will not be tried again without intervention.
+10. Before production, decide whether a schedule calls this endpoint, and record the decision.
 
 ## 9.3 Owner-Only Analytics Summary
 

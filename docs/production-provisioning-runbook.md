@@ -132,6 +132,7 @@ afterwards.
 | 13 | Fourth save on Free | `403 entitlement_trace_limit_reached` |
 | 14 | `POST /api/media` with 21 files | `400 entitlement_image_limit_exceeded` |
 | 15 | Delete a trace | `200`, then media returns `404` |
+| 15a | `GET /api/admin/media/cleanup` with token | `200`, empty queue, `needsAttention` false |
 | 16 | `/vault`, `/timeline`, `/map` | load and open the same trace |
 | 17 | `/world-land.json` | `200`, served from the app origin |
 | 18 | `GET /api/admin/analytics/cleanup` without token | `403` |
@@ -165,6 +166,12 @@ Retention is enforced two ways:
 If you want a schedule, the simplest option that does not disturb the OpenNext-generated
 worker is an external scheduler or a small separate Worker with a cron trigger that calls
 the endpoint with the token. Decide and record the choice; do not leave it implicit.
+
+The same applies to `POST /api/admin/media/cleanup`, which retries private media that R2
+refused to delete. Trace deletion already drains a few of the caller's own pending keys, so
+the queue heals on normal use, but a scheduled sweep is what clears keys belonging to
+accounts that have gone quiet. Watch `needsAttention` in the `GET` response: a non-zero
+`abandoned` count means keys have exhausted their retries and are waiting on a human.
 
 ## 9. Evidence To Record In progress.md
 

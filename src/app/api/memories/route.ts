@@ -14,6 +14,7 @@ import {
   incrementLifetimeCounter,
   permanentTraceUsage,
 } from "@/lib/server/entitlements";
+import { enqueueMediaCleanup, sweepMediaCleanup } from "@/lib/server/media-cleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -351,19 +352,48 @@ export async function DELETE(request: Request) {
     await db.prepare("DELETE FROM comments WHERE memory_id = ?1").bind(memoryId).run();
     await db.prepare("DELETE FROM memories WHERE id = ?1 AND user_id = ?2").bind(memoryId, user.id).run();
 
+    // The row is already gone, so the media is unreachable through the API from here on:
+    // access is authorised by looking up a referencing trace. Removing the R2 object is a
+    // separate step, and a failure there must not be reported once and forgotten, or the
+    // bucket keeps a file the user believes is deleted.
     let mediaCleanupFailed = false;
+    let mediaQueued = 0;
     if (mediaKeys.length > 0) {
       try {
         const bucket = await requireBucket();
         await bucket.delete(mediaKeys);
-      } catch {
+      } catch (thrown) {
         mediaCleanupFailed = true;
+        mediaQueued = await enqueueMediaCleanup(db, {
+          keys: mediaKeys,
+          userId: user.id,
+          memoryId,
+          error: thrown instanceof Error ? thrown.message : "bucket_delete_failed",
+        });
       }
+    }
+
+    // Opportunistic drain, so a recovered bucket heals without waiting for a scheduler.
+    // Scoped to this user's own keys and bounded, and never allowed to fail the deletion
+    // the user actually asked for.
+    let mediaRetried = 0;
+    try {
+      const bucket = await requireBucket();
+      const swept = await sweepMediaCleanup(db, bucket, { userId: user.id, limit: 5 });
+      mediaRetried = swept.deleted;
+    } catch {
+      // Nothing to report: the queue keeps the work for the next attempt.
     }
 
     return jsonResponse({
       ok: true,
-      deleted: { memoryId, mediaKeys: mediaKeys.length, mediaCleanupFailed },
+      deleted: {
+        memoryId,
+        mediaKeys: mediaKeys.length,
+        mediaCleanupFailed,
+        mediaQueuedForRetry: mediaQueued,
+        mediaRetriedFromQueue: mediaRetried,
+      },
     });
   } catch (thrown) {
     if (thrown instanceof HttpError) return thrown.response;

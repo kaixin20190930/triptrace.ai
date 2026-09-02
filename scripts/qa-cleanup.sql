@@ -25,7 +25,13 @@ DELETE FROM usage_counters WHERE user_id IN (
 DELETE FROM analytics_events WHERE user_id IN (
   SELECT id FROM users WHERE email LIKE 'qa-%@example.invalid'
 );
+-- Must run before the users delete, since it resolves accounts through that table.
+DELETE FROM media_cleanup_queue WHERE user_id IN (
+  SELECT id FROM users WHERE email LIKE 'qa-%@example.invalid'
+);
 DELETE FROM users WHERE email LIKE 'qa-%@example.invalid';
+
+DELETE FROM media_cleanup_queue WHERE media_key LIKE 'users/guard/%';
 
 DELETE FROM usage_counters WHERE user_id LIKE 'guest:%';
 DELETE FROM rate_limits WHERE bucket_key LIKE 'generate_memory%';

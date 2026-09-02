@@ -55,8 +55,7 @@ Owner-executed infrastructure, which an agent must not do unprompted:
 
 Remaining engineering work:
 
-7. `PA-108 follow-up` Observability for R2 media cleanup retries.
-8. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable.
+7. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable. Note the plan's own constraint: every historical fact must be human-verified, so an agent can build the structure, data model, map and timeline synchronisation, and SEO markup, but the owner must verify the content.
 9. Confirm the CI workflow on a real runner. It is committed and its commands are all verified locally, but this repository has no Git remote yet, so no run has been observed.
 
 ## Completion Snapshot
@@ -77,9 +76,9 @@ Remaining engineering work:
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
 | Historical Atlas | NOT_STARTED | `/explore` is a placeholder/acquisition surface only |
 | Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
-| Sharing/export/deletion | IN_PROGRESS | Copy, poster export, and owner-only trace deletion exist; selected share links and account deletion are incomplete |
+| Sharing/export/deletion | IN_PROGRESS | Copy, poster export, and owner-only trace deletion exist, with a durable retry queue and operator report for media that R2 refuses to delete; selected share links and account deletion are incomplete |
 | Entitlements and server limits | DONE | Plan resolution, usage metering, and server enforcement on generate/media/memories are implemented and verified by 37 automated API checks |
-| Automated tests | DONE (CI unobserved) | 149 checks total: 71 unit with no server, 44 API/privacy/entitlement, 34 billing. `npm run test:all` runs everything and manages its own server. A CI workflow is committed but has never run, because the repository has no remote |
+| Automated tests | DONE (CI unobserved) | 172 checks total: 83 unit with no server, 55 API/privacy/entitlement, 34 billing. `npm run test:all` runs everything and manages its own server. A CI workflow is committed but has never run, because the repository has no remote |
 | Billing | DONE (pending Stripe account) | Checkout, customer portal, signed idempotent webhook, `/plan` page, and billing analytics are implemented and verified with locally signed payloads; real Stripe keys, prices, and a test-mode end-to-end run remain |
 | Production deployment | NOT_STARTED | No deployment evidence from rebuilt repository |
 
@@ -323,6 +322,26 @@ Orchestration verification:
 
 Honest limitation: the workflow file itself has never executed. Every command inside it is verified locally, but runner-specific behaviour, such as whether `cf:build` completes inside the time limit on a GitHub runner, is unproven until a remote exists and a run happens.
 
+Media deletion made durable (`PA-108`):
+
+Reading the delete path showed this was more than an observability gap. A failed R2 delete was reported once in the response and then forgotten, with nothing tracking the key. The database row was already gone, so the photo was unreachable through the API, but the object stayed in the bucket indefinitely: a cost leak and a weaker guarantee than "deleting a trace deletes its photos".
+
+- Added `migrations/0011_media_cleanup_queue.sql` with attempt counts, last error, a next-attempt time, and an `abandoned_at` marker so a stuck key stays visible instead of retrying forever.
+- Added `src/lib/server/media-cleanup.ts`: enqueue, bounded sweep, exponential backoff, and aggregate stats.
+- Trace deletion now enqueues failed keys, and also drains up to five of the caller's own pending keys on each delete, so a recovered bucket heals through normal use without a scheduler. That drain can never fail the deletion the user asked for.
+- The sweep refuses to delete a key that a surviving trace still references, dropping it from the queue instead. A live memory must never lose its photo to a stale queue entry.
+- Added `GET` and `POST /api/admin/media/cleanup`, token-gated through the shared fail-shut admin gate. The report returns counts and timestamps only: a media key identifies a specific private photo and has no place in an operational report.
+
+A defect found by its own test: the one-day backoff ceiling was unreachable. The exponent was clamped at 10, which caps the delay at 17 hours, so `Math.min(base, oneDay)` could never return the ceiling. With the old 8-attempt limit the total retry window was also only about four hours, which would abandon keys during a single long storage incident. The exponent clamp was raised above the attempt limit and the limit raised to 12, giving a verified 58-hour window with the ceiling actually reached at the final attempt.
+
+Verification:
+
+- Added `scripts/media-cleanup-unit-tests.mts`: 12 of 12 checks on the retry schedule, including the ceiling being reachable rather than dead code, monotonicity, negative and fractional attempt counts, and the total retry window.
+- The API suite now exercises the full cycle against real local R2: upload an object, confirm the owner can read it, seed a pending queue row standing in for a past failure, confirm it is reported as pending and due, sweep, confirm the object is deleted and the row cleared, confirm a second sweep is a no-op, and confirm the sweep refuses to delete a key that a surviving trace still references. 55 of 55 checks pass.
+- Honest gap: the R2-failure branch itself is not triggered by a test, because an R2 delete failure cannot be provoked through the API. The queue is seeded instead, so everything downstream of the failure is covered while the failure detection itself is only covered by inspection.
+- `npm run test:unit` is now 83 checks, `npm run test:api` 55, `npm run test:billing` 34. `lint`, `tsc --noEmit`, `git diff --check`, `build`, and `cf:build` pass.
+- Local D1 and R2 are clean after the run: five pre-existing accounts, two memories, 79 analytics rows, and an empty cleanup queue.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -353,6 +372,8 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-01 | Stripe writes only to `subscriptions`; entitlements are always re-derived | A dropped or delayed webhook can then only under-grant, never over-grant access |
 | 2026-09-01 | `checkout.session.completed` links the customer but never sets the plan | Stripe does not guarantee event order, so a late checkout must not downgrade an active subscriber |
 | 2026-09-01 | An unrecognised Stripe price maps to Free | A misconfigured or foreign price must never be able to grant a paid plan |
+| 2026-09-01 | Failed media deletions are queued and retried, not just reported | "Deleting a trace deletes its photos" is only true if something guarantees the storage delete eventually happens |
+| 2026-09-01 | The media sweep never deletes a key a surviving trace references | A stale queue entry must not be able to strip a photo from a live memory |
 
 ## Blockers
 

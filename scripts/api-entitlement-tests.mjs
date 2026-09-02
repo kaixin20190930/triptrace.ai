@@ -14,6 +14,8 @@
 // The script creates its own throwaway accounts, exercises the limits, and deletes
 // everything it created. It never touches pre-existing users or traces.
 
+import { execFile } from "node:child_process";
+
 const args = process.argv.slice(2);
 const WITH_AI = args.includes("--with-ai");
 /** Optional. When set, the analytics retention dry run is included. */
@@ -84,7 +86,29 @@ async function signUp(client, tag) {
   });
   const body = await json(response);
   if (!response.ok) throw new Error(`signup failed for ${tag}: ${response.status} ${JSON.stringify(body)}`);
-  return { email, password };
+  return { email, password, userId: body?.user?.id ?? null };
+}
+
+/**
+ * Inserts a pending media cleanup row directly, standing in for a past R2 failure.
+ *
+ * An R2 delete failure cannot be provoked through the API, so the queue is seeded and the
+ * sweep is then exercised for real against the local bucket. Local development database
+ * only; this writes through Wrangler's `--local` state.
+ */
+async function seedCleanupQueue(mediaKey, userId) {
+  const now = new Date(Date.now() - 60_000).toISOString();
+  const sql = `INSERT OR REPLACE INTO media_cleanup_queue
+    (media_key, user_id, memory_id, attempts, last_error, created_at, updated_at, next_attempt_at, abandoned_at)
+    VALUES ('${mediaKey}', '${userId}', NULL, 1, 'seeded_by_test', '${now}', '${now}', '${now}', NULL);`;
+  return new Promise((resolve) => {
+    execFile(
+      "npx",
+      ["wrangler", "d1", "execute", "triptrace", "--local", "--command", sql],
+      { cwd: process.cwd() },
+      (error) => resolve(!error),
+    );
+  });
 }
 
 function traceBody(overrides = {}) {
@@ -193,6 +217,7 @@ async function run() {
 
   // ---------------------------------------------------------------- owner account
   const ownerAccount = await signUp(owner, "owner");
+  const ownerUserId = ownerAccount.userId;
   const ownerEntitlements = await json(await owner.fetch("/api/entitlements"));
   check(
     "new signed-in user defaults to the free plan",
@@ -301,6 +326,108 @@ async function run() {
       unlocatedTrace.body?.memory?.isFirstTrace === false,
     `first=${locatedTrace.body?.memory?.isFirstTrace} second=${unlocatedTrace.body?.memory?.isFirstTrace}`,
   );
+
+  // ---------------------------------------------------------------- media cleanup queue
+  const cleanupNoToken = await guest.fetch("/api/admin/media/cleanup");
+  check(
+    "the media cleanup queue is closed without an operator token",
+    cleanupNoToken.status === 403 || cleanupNoToken.status === 503,
+    `status=${cleanupNoToken.status}`,
+  );
+
+  if (ADMIN_TOKEN) {
+    const adminHeaders = { "x-triptrace-admin-token": ADMIN_TOKEN };
+
+    const stats = await json(await fetch(`${BASE_URL}/api/admin/media/cleanup`, { headers: adminHeaders }));
+    check(
+      "the cleanup queue reports aggregates and an attention flag",
+      stats?.ok === true &&
+        typeof stats?.queue?.pending === "number" &&
+        typeof stats?.queue?.abandoned === "number" &&
+        typeof stats?.needsAttention === "boolean",
+      JSON.stringify(stats?.queue),
+    );
+    check(
+      "the cleanup report never exposes media keys",
+      !JSON.stringify(stats || {}).includes("users/"),
+    );
+
+    // Upload a real object, then delete the trace that would have referenced it while the
+    // key sits in the queue. This exercises the sweep against real R2 rather than a mock.
+    const queueUpload = new FormData();
+    queueUpload.append("photos", new Blob([tinyPng], { type: "image/png" }), "queue-fixture.png");
+    const queueUploadResponse = await owner.fetch("/api/media", { method: "POST", body: queueUpload });
+    const queuedKey = (await json(queueUploadResponse))?.files?.[0]?.key;
+    check("a fixture object was uploaded for the sweep", Boolean(queuedKey), `key present=${Boolean(queuedKey)}`);
+
+    if (queuedKey) {
+      const beforeSweep = await owner.fetch(`/api/media?key=${encodeURIComponent(queuedKey)}`);
+      check(
+        "the fixture object is readable by its owner before the sweep",
+        beforeSweep.status === 200,
+        `status=${beforeSweep.status}`,
+      );
+
+      const seeded = await seedCleanupQueue(queuedKey, ownerUserId);
+      check("a pending cleanup row can be seeded for the sweep", seeded, "via local D1");
+
+      if (seeded) {
+        const dueNow = await json(await fetch(`${BASE_URL}/api/admin/media/cleanup`, { headers: adminHeaders }));
+        check(
+          "the seeded key is reported as pending and due",
+          dueNow?.queue?.pending >= 1 && dueNow?.queue?.due >= 1,
+          JSON.stringify(dueNow?.queue),
+        );
+
+        const sweep = await json(
+          await fetch(`${BASE_URL}/api/admin/media/cleanup`, { method: "POST", headers: adminHeaders }),
+        );
+        check(
+          "the sweep deletes the pending object and clears it from the queue",
+          sweep?.swept?.deleted >= 1 && sweep?.queue?.pending === 0,
+          JSON.stringify(sweep?.swept),
+        );
+
+        const afterSweep = await owner.fetch(`/api/media?key=${encodeURIComponent(queuedKey)}`);
+        check(
+          "the object is gone from storage after the sweep",
+          afterSweep.status === 404,
+          `status=${afterSweep.status}`,
+        );
+
+        const emptySweep = await json(
+          await fetch(`${BASE_URL}/api/admin/media/cleanup`, { method: "POST", headers: adminHeaders }),
+        );
+        check(
+          "sweeping an empty queue is a safe no-op",
+          emptySweep?.swept?.attempted === 0 && emptySweep?.swept?.deleted === 0,
+          JSON.stringify(emptySweep?.swept),
+        );
+      }
+    }
+
+    // A key that a surviving trace still references must never be deleted by the sweep.
+    const guardTrace = await createTrace(owner, {
+      title: "QA cleanup guard",
+      photoKeys: ["users/guard/never-delete.png"],
+    });
+    if (guardTrace.body?.memory?.id) {
+      const seededGuard = await seedCleanupQueue("users/guard/never-delete.png", ownerUserId);
+      if (seededGuard) {
+        const guardSweep = await json(
+          await fetch(`${BASE_URL}/api/admin/media/cleanup`, { method: "POST", headers: adminHeaders }),
+        );
+        check(
+          "the sweep refuses to delete media that a surviving trace still references",
+          guardSweep?.swept?.deleted === 0 && guardSweep?.queue?.pending === 0,
+          JSON.stringify(guardSweep?.swept),
+        );
+      }
+      await deleteTrace(owner, guardTrace.body.memory.id);
+    }
+  } else {
+    console.log("SKIP  media cleanup queue checks (set ADMIN_TASK_TOKEN to include them)");
+  }
 
   // Fill the free trace allowance exactly.
   let firstTraceFlagCount = 0;
