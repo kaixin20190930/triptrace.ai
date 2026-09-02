@@ -17,12 +17,30 @@ Rule:
 3b. Run `npm run test:unit`; it needs no server, no Stripe account, and must report all checks passing.
 3c. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
 3c-2. Run `STRIPE_WEBHOOK_SECRET=<local secret> ADMIN_TASK_TOKEN=<local token> npm run test:billing -- http://127.0.0.1:3000` and confirm every check passes.
-3d. Run `npm run qa:cleanup` afterwards and confirm no `qa-entitlements-*` or `qa-gen-quota-*` account remains in local D1.
+3d. Run `npm run qa:cleanup` afterwards and confirm no `qa-*@example.invalid` account remains in local D1.
+3e. Shortcut for all of the above: `npm run test:all` runs lint, type checking, the unit suites, and both HTTP suites, starting and stopping its own server. Run `npm run build` only after it finishes, never alongside it.
 4. Test the current change on desktop and mobile widths.
 5. Test signed out and signed in when auth, storage, media, or privacy is affected.
 6. Do not run `npm run build` or `npm run cf:build` while `npm run dev` is still running; both modes write to `.next` and can invalidate development HMR chunks.
 7. If the browser enters a Fast Refresh reload loop with `ChunkLoadError`, stop the dev server, move the stale `.next` directory aside, restart `npm run dev`, and hard-refresh the browser once.
 8. Open both `http://localhost:3000` and `http://127.0.0.1:3000`; confirm form controls hydrate normally and the terminal does not report a blocked `/_next/webpack-hmr` cross-origin request.
+
+### 1.1 Automated Suites
+
+| Command | Needs a server | Needs secrets | What it covers |
+|---|---|---|---|
+| `npm run test:unit` | no | no | Map projection and geometry, Stripe signature and event mapping, checkout payload |
+| `npm run test:api` | yes | optional | Privacy, ownership, deletion, entitlements, quotas, concurrency, retention endpoint |
+| `npm run test:billing` | yes | optional | Webhook signatures, idempotency, event ordering, plan transitions, billing analytics |
+| `npm run test:e2e` | starts its own | no | Applies local migrations, runs both HTTP suites, removes its test data |
+| `npm run test:all` | starts its own | no | Lint, types, unit suites, then `test:e2e` |
+
+Notes:
+
+1. `test:e2e` reuses an existing `.dev.vars` without modifying it, and creates a temporary one only when the file is absent, deleting it on exit.
+2. The suites create their own `qa-*@example.invalid` accounts and delete their own data. They never touch pre-existing accounts or traces.
+3. `--with-ai` on `test:api` spends one real AI generation. Leave it off unless that is intended.
+4. CI runs the same commands. See `.github/workflows/ci.yml`.
 
 ## 2. Product Identity
 

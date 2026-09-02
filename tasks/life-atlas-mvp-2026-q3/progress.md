@@ -57,7 +57,7 @@ Remaining engineering work:
 
 7. `PA-108 follow-up` Observability for R2 media cleanup retries.
 8. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable.
-9. Wire the three test suites into a CI runner so regressions are caught without remembering to run them.
+9. Confirm the CI workflow on a real runner. It is committed and its commands are all verified locally, but this repository has no Git remote yet, so no run has been observed.
 
 ## Completion Snapshot
 
@@ -79,7 +79,7 @@ Remaining engineering work:
 | Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
 | Sharing/export/deletion | IN_PROGRESS | Copy, poster export, and owner-only trace deletion exist; selected share links and account deletion are incomplete |
 | Entitlements and server limits | DONE | Plan resolution, usage metering, and server enforcement on generate/media/memories are implemented and verified by 37 automated API checks |
-| Automated tests | IN_PROGRESS | 71 unit checks with no server, 44 API/privacy/entitlement checks, and 34 billing checks all pass locally; none are wired into a CI runner yet |
+| Automated tests | DONE (CI unobserved) | 149 checks total: 71 unit with no server, 44 API/privacy/entitlement, 34 billing. `npm run test:all` runs everything and manages its own server. A CI workflow is committed but has never run, because the repository has no remote |
 | Billing | DONE (pending Stripe account) | Checkout, customer portal, signed idempotent webhook, `/plan` page, and billing analytics are implemented and verified with locally signed payloads; real Stripe keys, prices, and a test-mode end-to-end run remain |
 | Production deployment | NOT_STARTED | No deployment evidence from rebuilt repository |
 
@@ -304,6 +304,24 @@ Verification:
 - All QA accounts, subscriptions, usage counters, and webhook ledger rows created during testing were removed. `scripts/qa-cleanup.sql` was generalised to match any `qa-*@example.invalid` account, and local D1 is back to five pre-existing accounts, two memories, and 79 analytics rows.
 
 Local environment note: placeholder `STRIPE_WEBHOOK_SECRET` and price ids were appended to the gitignored `.dev.vars` for testing. `STRIPE_SECRET_KEY` was deliberately left unset, which also exercised the not-configured checkout path. No real Stripe key exists in this repository or on this machine.
+
+Test orchestration and CI added:
+
+- Added `scripts/run-e2e-tests.mjs`. It applies local D1 migrations, finds a free port, starts its own `next dev`, waits for readiness, runs the API and billing suites, removes the test data, and always shuts the server down, including on interrupt.
+- An existing `.dev.vars` is read but never modified or overwritten. When the file is absent the runner creates a temporary one from local placeholders and deletes it on exit. If the file exists but lacks a required value, the runner refuses to guess and says which value is missing.
+- Added `npm run test:e2e` and `npm run test:all`. The latter is the single command for lint, types, unit suites, and both HTTP suites.
+- Added `.github/workflows/ci.yml` running the same commands, plus a guard step that fails the build if `.dev.vars`, `.next`, `.open-next`, `.wrangler`, or any `.sqlite` file is ever tracked. No secrets are needed, because the suites generate their own local state and sign their own webhook payloads.
+- `git diff --check` was deliberately left out of CI. On a clean checkout it compares the working tree to the index and can never fail, so it stays a local gate rather than a step that always passes.
+- Node 22.6 or newer is required in CI because the unit suites run TypeScript through Node's built-in type stripping instead of a build step.
+
+Orchestration verification:
+
+- `npm run test:e2e` with the existing `.dev.vars` present: 44 of 44 API checks and 34 of 34 billing checks passed, and the server was shut down afterwards.
+- Repeated with `.dev.vars` moved aside to reproduce a clean CI checkout: the runner created a temporary file, both suites passed identically, the temporary file was deleted, and no process was left listening on the port. The real `.dev.vars` was byte-for-byte identical after being restored.
+- The CI secret-guard logic was checked against the current index: none of the protected paths are tracked, and no `.sqlite` file is tracked among the 134 tracked files.
+- `npm run lint`, `./node_modules/.bin/tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` all pass.
+
+Honest limitation: the workflow file itself has never executed. Every command inside it is verified locally, but runner-specific behaviour, such as whether `cf:build` completes inside the time limit on a GitHub runner, is unproven until a remote exists and a run happens.
 
 Pre-existing local residue left untouched, since it is not this session's to remove:
 

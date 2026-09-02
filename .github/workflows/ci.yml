@@ -1,0 +1,84 @@
+# Continuous integration for TripTrace.ai.
+#
+# Every command here is the same one used locally, so a green run means the same checks
+# that gate a local change also gate a push. No secrets are required: the end-to-end
+# suites create their own local D1 and R2 state and their own throwaway accounts, and
+# billing is exercised with locally signed webhook payloads rather than a Stripe account.
+#
+# Note: this repository had no remote when the workflow was added, so it has not yet been
+# observed running on a GitHub runner. The underlying commands are all verified locally.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, types, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # 22.6 or newer is required: the unit suites run TypeScript through Node's
+          # built-in type stripping rather than a build step.
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # `git diff --check` is intentionally not run here. On a clean checkout it compares
+      # the working tree to the index and can never fail, so it belongs to the local gate
+      # in docs/manual-testing-guide.md rather than to CI.
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      # Starts its own development server on a free port, applies local migrations, runs
+      # the API, privacy, entitlement, and billing suites, then removes its test data.
+      - name: HTTP tests
+        run: npm run test:e2e
+
+      # Runs after the HTTP tests on purpose. Both the development server and the
+      # production build write to `.next`, and running them concurrently corrupts chunks.
+      - name: Production build
+        run: npm run build
+
+      - name: Cloudflare build
+        run: npm run cf:build
+
+      - name: Confirm no secrets or local state were committed
+        run: |
+          set -e
+          for path in .dev.vars .next .open-next .wrangler; do
+            if git ls-files --error-unmatch "$path" > /dev/null 2>&1; then
+              echo "::error::$path must never be committed"
+              exit 1
+            fi
+          done
+          if git ls-files | grep -E '\.sqlite$' ; then
+            echo "::error::local database files must never be committed"
+            exit 1
+          fi
+          echo "No secrets or local state are tracked."

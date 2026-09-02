@@ -15,6 +15,8 @@
     "test:stripe": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/ts-runner.mjs scripts/stripe-unit-tests.mts",
     "test:unit": "npm run test:map && npm run test:stripe",
     "test:billing": "node scripts/api-billing-tests.mjs",
+    "test:e2e": "node scripts/run-e2e-tests.mjs",
+    "test:all": "npm run lint && tsc --noEmit && npm run test:unit && npm run test:e2e",
     "build:world-land": "node scripts/build-world-land.mjs",
     "qa:cleanup": "wrangler d1 execute triptrace --local --file=scripts/qa-cleanup.sql"
   },
