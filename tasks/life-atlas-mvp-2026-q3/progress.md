@@ -76,7 +76,7 @@ Remaining engineering work:
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
 | Historical Atlas | NOT_STARTED | `/explore` is a placeholder/acquisition surface only |
 | Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
-| Export and deletion | IN_PROGRESS | Complete JSON export, ZIP archive with photos, per-trace poster, owner-only trace deletion with a durable media retry queue, and full account deletion with password re-entry all exist and are verified; selected share links (`M3-005/006`) remain |
+| Sharing, export, deletion | DONE (pending browser QA) | Per-trace share links with hashed tokens, an allowlisted payload, blurred coordinates, and immediate revocation; complete JSON export and ZIP archive with photos; per-trace poster; trace deletion with a durable media retry queue; full account deletion with password re-entry. All verified by automated checks |
 | Entitlements and server limits | DONE | Plan resolution, usage metering, and server enforcement on generate/media/memories are implemented and verified by 37 automated API checks |
 | Automated tests | DONE (CI unobserved) | 172 checks total: 83 unit with no server, 55 API/privacy/entitlement, 34 billing. `npm run test:all` runs everything and manages its own server. A CI workflow is committed but has never run, because the repository has no remote |
 | Billing | DONE (pending Stripe account) | Checkout, customer portal, signed idempotent webhook, `/plan` page, and billing analytics are implemented and verified with locally signed payloads; real Stripe keys, prices, and a test-mode end-to-end run remain |
@@ -404,6 +404,32 @@ A weakness in my own assertions was also corrected. The account test originally 
 
 Known gap, recorded rather than glossed over: `M3-008` also names share links, which do not exist yet (`M3-005`). That half cannot be tested until sharing lands, and the manual guide says so.
 
+Selected-trace sharing and revocation implemented (`M3-005`, `M3-006`):
+
+Sharing is the only deliberate hole in a private-by-default product, so it was built and tested as a privacy feature rather than a growth feature. It also completes the share-link half of `M3-008`, which previously could not be tested.
+
+- Added `migrations/0012_share_links.sql` and `src/lib/server/share-links.ts`.
+- `POST /api/share` creates a link for one owned trace, `GET /api/share` lists links, `DELETE /api/share?linkId=` revokes.
+- `GET /api/shared/[token]` returns the public payload and `/s/[token]` renders the human-facing page, both `noindex` and both `no-store`.
+- `GET /api/shared/[token]/media/[index]` serves the photos.
+- Added an owner-facing share panel to trace detail that states what a link exposes before one is created.
+
+Six decisions, each with a reason:
+
+- Tokens are stored as unsalted SHA-256 hashes. A dump of the table yields no working URLs, and the hash stays deterministic so lookup still works. The cost is that a URL cannot be shown twice, which is why the interface shows it once and says so plainly rather than pretending otherwise.
+- The public payload is built field by field from an allowlist. Returning the stored trace would leak the owner's account id, their email through the joined user record, exact coordinates, and any field added to traces later. A unit test asserts the exact key set so the allowlist fails closed as the schema grows.
+- Coordinates are rounded to about a kilometre. A recipient can see the neighbourhood a memory belongs to; sharing a memory must not mean sharing an address.
+- Photos are addressed by position under the token rather than by storage key. This was a correction: the first implementation passed the token to the existing media route, and a test caught that the storage key embeds the owner's account id, so every shared photo URL leaked it. Indexing also leaves a recipient nothing to probe with, since they cannot name a key at all. Share support was then removed from the owner-only media route entirely, which leaves one less path that could be talked into serving someone else's media.
+- Shared responses are `no-store` and shared photos are `private, max-age=60`. A long or shared cache would let a revoked link keep serving content from an intermediary, which would make revocation a lie.
+- Unknown, revoked, expired, and out-of-range all answer identically, so the endpoints cannot be used to probe for valid tokens or ids. Revocation of a link belonging to another account is likewise indistinguishable from a missing one.
+
+Verification:
+
+- Added `scripts/share-links-unit-tests.mts`: 35 of 35 checks, covering token shape and uniqueness across 500 draws, rejection of empty, short, overlong, traversal, and non-string tokens, hash determinism, expiry boundary behaviour, revocation winning over a future expiry, and the payload shaping including the exact allowlist and the absence of the account id, storage keys, and exact coordinates anywhere in the serialised output.
+- Added `scripts/api-sharing-tests.mjs`: 54 of 54 checks over HTTP, covering authentication, refusal to mint a link for another account's trace, one-time URL delivery, the public read and page, `noindex` headers, photo access by index, refusal of out-of-range and non-numeric indexes, the owner-only media route refusing to serve a shared photo even when handed a token, isolation between two tokens, invalid-token handling, view counting, cross-account revocation failure, immediate revocation of both story and photos, double revocation, auditability of a revoked link, expiry, link removal on trace deletion, link removal on account deletion, and share links appearing in the export by prefix only.
+- `npm run test:unit` is now 183 checks across six suites. `npm run test:e2e` runs four HTTP suites totalling 178 checks.
+- `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -440,6 +466,10 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-02 | Data export is free on every plan and never consults entitlements | Retrieving your own memories is a portability right, not a paid feature |
 | 2026-09-02 | Account deletion requires the password, not just a session | A borrowed or stolen session must not be able to destroy someone's Atlas |
 | 2026-09-02 | Deletion is refused while a paid subscription is live | Nobody may be billed for an account that no longer exists |
+| 2026-09-02 | Share tokens are stored hashed, so a URL is shown only once | A database dump must not yield working links; the usability cost is worth stating honestly rather than avoiding |
+| 2026-09-02 | The shared payload is an allowlist, not the stored trace | It fails closed as the schema grows, instead of leaking each new field |
+| 2026-09-02 | Shared coordinates are blurred to about a kilometre | Sharing a memory must not mean sharing an address |
+| 2026-09-02 | Shared photos are addressed by index, never by storage key | A storage key embeds the owner's account id, and an index leaves a recipient nothing to probe with |
 
 ## Blockers
 

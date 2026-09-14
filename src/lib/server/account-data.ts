@@ -13,6 +13,7 @@
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
 import { rowToMemory, safeParseArray, type MemoryRow } from "./memories";
 import { enqueueMediaCleanup } from "./media-cleanup";
+import { deleteShareLinksForUser } from "./share-links";
 import type { SessionUser } from "./auth";
 
 export const EXPORT_FORMAT_VERSION = 1;
@@ -75,6 +76,15 @@ export type AccountExport = {
     cancelAtPeriodEnd: boolean;
   };
   usage: Array<{ periodKey: string; metricKey: string; count: number }>;
+  /** Active and revoked share links, by prefix only. Tokens are stored hashed. */
+  shareLinks: Array<{
+    memoryId: string;
+    prefix: string;
+    createdAt: string;
+    expiresAt: string | null;
+    revokedAt: string | null;
+    viewCount: number;
+  }>;
   traces: ReturnType<typeof rowToMemory>[];
   media: Array<{ key: string; url: string; archivePath: string }>;
   /** The account's own analytics rows, which exist for at most the retention window. */
@@ -122,6 +132,21 @@ export async function buildAccountExport(
     .bind(user.id)
     .all<{ event_name: string; occurred_at: string; properties_json: string }>();
 
+  const shareLinkRows = await db
+    .prepare(
+      `SELECT memory_id, token_prefix, created_at, expires_at, revoked_at, view_count
+       FROM share_links WHERE user_id = ?1 ORDER BY created_at DESC`,
+    )
+    .bind(user.id)
+    .all<{
+      memory_id: string;
+      token_prefix: string;
+      created_at: string;
+      expires_at: string | null;
+      revoked_at: string | null;
+      view_count: number;
+    }>();
+
   const mediaKeys = collectMediaKeys(rows);
 
   return {
@@ -136,6 +161,8 @@ export async function buildAccountExport(
       "`media` lists your photos. In the ZIP archive they are included under `archivePath`.",
       "In the JSON export they are referenced by `url`, which requires you to be signed in.",
       "`activity` holds your own product analytics rows, which are kept for at most 90 days.",
+      "`shareLinks` lists any links you created, by prefix only. The tokens themselves are",
+      "stored hashed and cannot be recovered, which is why a link URL is shown only once.",
       "Nothing here is shared with anyone else. Your traces are private unless you made one public.",
     ],
     account: {
@@ -154,6 +181,14 @@ export async function buildAccountExport(
       periodKey: row.period_key,
       metricKey: row.metric_key,
       count: Number(row.count || 0),
+    })),
+    shareLinks: (shareLinkRows.results || []).map((row) => ({
+      memoryId: row.memory_id,
+      prefix: row.token_prefix,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+      viewCount: Number(row.view_count || 0),
     })),
     traces: rows.map(rowToMemory),
     media: mediaKeys.map((key) => ({
@@ -177,6 +212,7 @@ export type DeletionResult = {
   traces: number;
   mediaDeleted: number;
   mediaQueued: number;
+  shareLinks: number;
 };
 
 /**
@@ -219,6 +255,8 @@ export async function deleteAccountData(
     });
   }
 
+  const shareLinks = await deleteShareLinksForUser(db, userId);
+
   await db.prepare("DELETE FROM comments WHERE user_id = ?1").bind(userId).run();
   await db
     .prepare("DELETE FROM comments WHERE memory_id IN (SELECT id FROM memories WHERE user_id = ?1)")
@@ -231,5 +269,5 @@ export async function deleteAccountData(
   await db.prepare("DELETE FROM analytics_events WHERE user_id = ?1").bind(userId).run();
   await db.prepare("DELETE FROM users WHERE id = ?1").bind(userId).run();
 
-  return { traces: rows.length, mediaDeleted, mediaQueued };
+  return { traces: rows.length, mediaDeleted, mediaQueued, shareLinks };
 }

@@ -25,6 +25,9 @@ DELETE FROM usage_counters WHERE user_id IN (
 DELETE FROM analytics_events WHERE user_id IN (
   SELECT id FROM users WHERE email LIKE 'qa-%@example.invalid'
 );
+DELETE FROM share_links WHERE user_id IN (
+  SELECT id FROM users WHERE email LIKE 'qa-%@example.invalid'
+);
 -- Must run before the users delete, since it resolves accounts through that table.
 DELETE FROM media_cleanup_queue WHERE user_id IN (
   SELECT id FROM users WHERE email LIKE 'qa-%@example.invalid'

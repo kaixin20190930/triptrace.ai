@@ -15,6 +15,7 @@ import {
   permanentTraceUsage,
 } from "@/lib/server/entitlements";
 import { enqueueMediaCleanup, sweepMediaCleanup } from "@/lib/server/media-cleanup";
+import { deleteShareLinksForMemory } from "@/lib/server/share-links";
 
 export const dynamic = "force-dynamic";
 
@@ -350,6 +351,9 @@ export async function DELETE(request: Request) {
     const mediaKeys = uniqueMediaKeys(existing.photo_keys_json, existing.cover_photo_key);
 
     await db.prepare("DELETE FROM comments WHERE memory_id = ?1").bind(memoryId).run();
+    // Share links go with the trace. A live link pointing at a deleted memory would be a
+    // dangling capability.
+    const revokedLinks = await deleteShareLinksForMemory(db, memoryId);
     await db.prepare("DELETE FROM memories WHERE id = ?1 AND user_id = ?2").bind(memoryId, user.id).run();
 
     // The row is already gone, so the media is unreachable through the API from here on:
@@ -393,6 +397,7 @@ export async function DELETE(request: Request) {
         mediaCleanupFailed,
         mediaQueuedForRetry: mediaQueued,
         mediaRetriedFromQueue: mediaRetried,
+        shareLinksRemoved: revokedLinks,
       },
     });
   } catch (thrown) {

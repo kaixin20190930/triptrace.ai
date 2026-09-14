@@ -27,6 +27,11 @@ async function resolveMediaAccess(db: D1Database, request: Request, key: string)
     return { allowed: true, isPublic: false };
   }
 
+  // Shared photos are deliberately not reachable here. They are served by
+  // `/api/shared/[token]/media/[index]`, which addresses them by position so a recipient
+  // never learns a storage key. Keeping that out of this route leaves one less way for an
+  // owner-only path to be talked into serving someone else's media.
+
   const reference = await db
     .prepare(
       `SELECT user_id, is_public

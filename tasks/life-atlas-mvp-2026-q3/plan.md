@@ -88,10 +88,10 @@ Every new user-facing feature must update `docs/manual-testing-guide.md`.
 | M3-002 | NOT_STARTED | Add Atlas filters | Year, place, person, and trace type filters work together |
 | M3-003 | NOT_STARTED | Add memory resurfacing | Existing traces can be surfaced without creating new content |
 | M3-004 | NOT_STARTED | Add revisit email | Users can opt in and unsubscribe; links open the correct trace |
-| M3-005 | NOT_STARTED | Add selected-trace sharing | Only explicitly selected traces become accessible by share link |
-| M3-006 | NOT_STARTED | Add share-link revocation | A user can revoke a link and immediately remove access |
+| M3-005 | IN_PROGRESS | Add selected-trace sharing | Per-trace links with hashed tokens, an allowlisted public payload, blurred coordinates, and position-addressed photos; 89 automated checks pass. Browser QA in section 9.5 is outstanding |
+| M3-006 | IN_PROGRESS | Add share-link revocation | Revocation is immediate for both story and photos, is auditable, and happens automatically on trace or account deletion; covered by the same checks. Browser QA outstanding |
 | M3-007 | IN_PROGRESS | Add digital export | Complete JSON export and a ZIP archive containing the photos are implemented and covered by 50 checks; the per-trace poster is the existing media-ready format. Browser QA in section 9.4.1 is outstanding |
-| M3-008 | IN_PROGRESS | Add complete deletion | Trace, media, and account deletion are implemented and verified, including password re-entry, an active-subscription guard, and a post-deletion database sweep. Share links do not exist yet (`M3-005`), so that half cannot be tested |
+| M3-008 | IN_PROGRESS | Add complete deletion | Trace, media, share-link, and account deletion are all implemented and verified, including password re-entry, an active-subscription guard, and a post-deletion database sweep. Browser QA in sections 9.4.2 and 9.5.3 is outstanding |
 | M3-009 | NOT_STARTED | Add GDPR/CCPA-facing controls | Consent, export, deletion, privacy notice, and AI disclosure are available |
 
 ## Milestone M4: Commercial MVP

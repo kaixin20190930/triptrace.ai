@@ -34,6 +34,7 @@ Rule:
 | `npm run test:api` | yes | optional | Privacy, ownership, deletion, entitlements, quotas, concurrency, media cleanup queue, retention endpoint |
 | `npm run test:billing` | yes | optional | Webhook signatures, idempotency, event ordering, plan transitions, billing analytics |
 | `npm run test:account` | yes | no | Export contents, real archive integrity, deletion guards, and what remains in the database afterwards |
+| `npm run test:sharing` | yes | no | Share-link creation, ownership, what a recipient can and cannot see, revocation, expiry, and removal on deletion |
 | `npm run test:e2e` | starts its own | no | Applies local migrations, runs both HTTP suites, removes its test data |
 | `npm run test:all` | starts its own | no | Lint, types, unit suites, then `test:e2e` |
 
@@ -179,7 +180,7 @@ is generated or saved.
 12. Confirm trace detail separates confirmed facts from the AI-generated story.
 13. Confirm trace detail shows factual note, people, place, date, tags, and AI provenance when present.
 14. Confirm `Copy` writes a readable trace summary and `Image` downloads a poster image.
-15. Confirm the detail view remains usable as a dialog on desktop and as a bottom drawer on mobile.
+15. Confirm the detail view remains usable as a dialog on desktop and as a bottom drawer on mobile, and that it offers the share panel from section 9.5.
 16. Click `Facts` in trace detail and edit date, date precision, place, people, and factual note.
 17. Confirm fact edits cannot be saved until the confirmation checkbox is selected.
 18. Save fact edits and confirm the detail view updates without closing.
@@ -347,8 +348,54 @@ must actually delete.
 10. Confirm the response reports how many traces and media objects were removed, and whether any media had to be queued for retry.
 11. Confirm a media object that could not be deleted appears in the cleanup queue from section 8.1 rather than being forgotten.
 
-Known gap: share links do not exist yet (`M3-005`), so the share-link half of `M3-008` cannot
-be tested. It must be covered when sharing lands.
+Share links are covered in section 9.5, including their removal on trace and account
+deletion, which completes the share-link half of `M3-008`.
+
+## 9.5 Selected-Trace Sharing And Revocation
+
+Sharing is the only deliberate hole in a private-by-default product. Test it as a privacy
+feature: a link must expose one trace and nothing else, and revoking it must take effect at
+once.
+
+### 9.5.1 Creating A Link
+
+1. Open a trace you own and confirm the share panel states exactly what a link exposes before you create one.
+2. Confirm the panel says the trace is currently visible only to you when no link exists.
+3. Create a link and confirm the full URL is shown once, is copied to the clipboard, and is accompanied by a clear warning that it will not be shown again.
+4. Confirm the saved list afterwards shows only a short prefix, never the full URL, and explains why.
+5. Confirm the list reports when the link was created and that it has not been opened yet.
+6. Create several links for one trace and confirm each is listed separately.
+7. Confirm creating an eleventh active link for one trace is refused with a clear message.
+
+### 9.5.2 What A Recipient Sees
+
+1. Open the link in a browser with no session, ideally a different browser entirely.
+2. Confirm the page shows the trace title, story, photos, date, place name, and the people the owner named.
+3. Confirm the page states who shared it and that only this one trace is visible.
+4. Confirm the page does not show the owner's email, any other trace, or an exact position. Coordinates must be described as approximate to about a kilometre.
+5. View the page source and confirm it is marked `noindex`. A shared memory must never enter search results.
+6. Confirm photo URLs are of the form `/api/shared/<token>/media/<index>` and contain no storage key or account id.
+7. Confirm the recipient cannot reach `/vault`, `/timeline`, or any other trace. A link is not a session.
+8. Confirm the shared trace does not appear in any public listing.
+9. Request a photo index beyond the trace's photos and confirm it is refused.
+10. Try an invented token, a very short token, and a token containing `/` or `..`; confirm each is refused identically.
+11. Try the trace id itself as a token and confirm it does not work.
+
+### 9.5.3 Revoking
+
+1. Reload the shared page a couple of times, then confirm the owner's list reports the view count and last opened time.
+2. From a second account, attempt to revoke the link and confirm it fails and the link still works.
+3. Revoke the link as the owner and confirm the shared page and the shared photos both stop working immediately.
+4. Confirm the revoked link still appears in the owner's list marked revoked, so the history stays auditable.
+5. Revoke the same link again and confirm it reports not found rather than succeeding twice.
+6. Create a link with an expiry, confirm it works, and confirm the expiry is shown to the owner.
+7. Delete a trace that has a live link and confirm the response reports the links removed and the link stops resolving.
+8. Delete an account with live links and confirm the response reports them and none of the links resolve afterwards.
+9. Confirm a share link never appears in a public cache: the shared page and shared photos must not be cached by an intermediary, or a revoked link could outlive its revocation.
+
+Automated coverage: `npm run test:sharing` drives all of the above over HTTP, and
+`npm run test:unit` asserts the token shape, the hashing, the expiry logic, and the exact
+allowlist of fields in a shared payload.
 
 ## 10. Plans, Quotas, And Server-Side Limits
 

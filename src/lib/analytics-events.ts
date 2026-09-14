@@ -20,6 +20,8 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS = {
   trace_story_edited: ["source"],
   trace_facts_edited: ["source", "fieldsCount"],
   trace_deleted: ["source", "hadMedia"],
+  trace_shared: ["source"],
+  share_link_revoked: ["source"],
   vault_opened: ["traceCount"],
   timeline_opened: ["traceCount"],
   map_opened: ["traceCount"],

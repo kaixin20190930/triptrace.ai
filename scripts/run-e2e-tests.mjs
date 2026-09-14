@@ -185,6 +185,9 @@ async function main() {
   log("Export and account deletion suite");
   const accountResult = await run("node", ["scripts/api-account-data-tests.mjs", baseUrl], { env: childEnv });
 
+  log("Sharing and revocation suite");
+  const sharingResult = await run("node", ["scripts/api-sharing-tests.mjs", baseUrl], { env: childEnv });
+
   log("Removing test data");
   await run("npx", ["wrangler", "d1", "execute", "triptrace", "--local", "--file=scripts/qa-cleanup.sql"], {
     stdio: "ignore",
@@ -196,7 +199,8 @@ async function main() {
   devServer = null;
   discardGeneratedDevTypes();
 
-  const allPassed = apiResult === 0 && billingResult === 0 && accountResult === 0;
+  const allPassed =
+    apiResult === 0 && billingResult === 0 && accountResult === 0 && sharingResult === 0;
   log(allPassed ? "All HTTP suites passed" : "Failures reported above");
   process.exit(allPassed ? 0 : 1);
 }

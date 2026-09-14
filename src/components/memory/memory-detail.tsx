@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { trackEvent } from "@/lib/analytics";
 import { downloadMemoryPoster } from "@/lib/poster";
+import { ShareControls } from "@/components/memory/share-controls";
 import type { Memory as PosterMemory } from "@/lib/memory-types";
 import type { Memory } from "@/lib/use-memories";
 
@@ -283,6 +284,7 @@ function NarrativeEditor({
 
 function MemoryContent({
   memory,
+  source,
   factDraft,
   narrativeDraft,
   editingFacts,
@@ -304,6 +306,7 @@ function MemoryContent({
   onSaveFacts,
 }: {
   memory: Memory;
+  source: string;
   factDraft: FactDraft;
   narrativeDraft: NarrativeDraft;
   editingFacts: boolean;
@@ -467,6 +470,8 @@ function MemoryContent({
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Factual Note</p>
             <p className="mt-3 text-sm leading-6 text-foreground/85">{factSummary}</p>
           </section>
+
+          {memory.id && <ShareControls memoryId={memory.id} source={source} />}
 
           <section className="rounded-2xl border border-border bg-card p-4">
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Narrative Source</p>
@@ -672,6 +677,7 @@ export function MemoryDetail({
   const content = (
     <MemoryContent
       memory={activeMemory}
+      source={source}
       factDraft={factDraft}
       narrativeDraft={narrativeDraft}
       editingFacts={editingFacts}
