@@ -43,7 +43,7 @@ Next implementation plan: `tasks/life-atlas-mvp-2026-q3/next-implementation-plan
 
 Owner-only steps, which cannot be completed by an agent:
 
-1. `PA-205/PA-206 follow-up` Narrative-quality acceptance with genuine personal travel and life photos. Only the owner can supply these; unrelated private images on this machine must not be substituted.
+1. `PA-205/PA-206 follow-up` Narrative-quality acceptance with genuine personal travel and life photos, plus section 2.1 clustering QA with a real photo library. Only the owner can supply these; unrelated private images on this machine must not be substituted.
 2. `M2-010/PA-601/PA-602 follow-up` Observe `first_atlas_saved` once in a signed-in browser. The server flag and the client trigger are both verified in code and by API test; the remaining step is a real browser save.
 3. Section 10 of `docs/manual-testing-guide.md` in a real browser, especially the guest-demo refusal and the Free-plan limit copy.
 4. Section 9.2 of `docs/manual-testing-guide.md` in a real browser. The map geometry is covered by automated tests, but pan, pinch zoom, focus rings, theme legibility, and the absence of third-party requests need human eyes on a real device.
@@ -65,7 +65,7 @@ Remaining engineering work:
 | Product scope and roadmap | DONE | English-first personal Life Atlas, historical acquisition, digital-only, Web-only scope recorded |
 | Active repository cutover | DONE | `/Users/liukai/Documents/triptrace.ai` is the only implementation target |
 | English product shell | DONE | Homepage, metadata, navigation, account entry, and core routes exist |
-| Text/photo capture | IN_PROGRESS | 1-20 images, multi-batch append, duplicate skipping, removable previews, compression, JPEG EXIF time/GPS extraction, and bounded vision inputs work; HEIC/advanced EXIF remains later |
+| Text/photo capture | IN_PROGRESS | Imports up to 200 photos and groups them into candidate traces by date and place; multi-batch append, duplicate skipping, removable previews, compression, JPEG EXIF time/GPS extraction, and bounded vision inputs work; HEIC/advanced EXIF and queue persistence remain |
 | AI generation | IN_PROGRESS | Real OpenAI vision generation, owner two-photo analysis, and browser text-generation QA pass; genuine personal-life narrative quality and failure-path QA remain |
 | Fact confirmation | IN_PROGRESS | Required before create and fact PATCH; date, coordinates, place, people, and factual note are editable |
 | Anonymous draft preservation | IN_PROGRESS | IndexedDB draft restore and sign-up-to-save path exist; needs broader manual QA |
@@ -341,6 +341,32 @@ Verification:
 - Honest gap: the R2-failure branch itself is not triggered by a test, because an R2 delete failure cannot be provoked through the API. The queue is seeded instead, so everything downstream of the failure is covered while the failure detection itself is only covered by inspection.
 - `npm run test:unit` is now 83 checks, `npm run test:api` 55, `npm run test:billing` 34. `lint`, `tsc --noEmit`, `git diff --check`, `build`, and `cf:build` pass.
 - Local D1 and R2 are clean after the run: five pre-existing accounts, two memories, 79 analytics rows, and an empty cleanup queue.
+
+Photo clustering implemented (`M2-004`):
+
+Context for the reordering: an audit of the defined roadmap against the code showed that Phase 1 (historical SEO) and most of Phase 3 (retention) were skipped while Phase 4 (billing) was built early, and that `M2-004` was missing. Missing clustering meant a real trip of 300 photos could only be entered 20 at a time, so the product was unusable for exactly the person it targets. The owner also decided to keep the `triptrace.ai` domain and defer any brand change, and to treat the earlier "Atlas Book" idea as withdrawn: the roadmap's own `M3-007 digital export` is the real item, and it sits in Phase 3.
+
+- Added `src/lib/photo-clustering.ts`. Photos are ordered by capture time and a new candidate starts on a gap over 6 hours or a move over 30 km, with the per-candidate size capped at 20 to match the entitlement layer's per-trace image limit.
+- Two rules from the fact contract shaped the algorithm. Nothing is invented: a suggested date or coordinate is only ever copied from metadata that exists. Photos with no date are never merged into a dated group, because that would hand them a date they do not have; they form their own clearly labelled candidate.
+- Suggested coordinates use the median rather than the mean, so one bad GPS fix cannot drag the suggestion across a city. The antimeridian limitation of taking latitude and longitude independently is documented in the module and accepted, since candidates are bounded to a small radius and the value is user-editable.
+- A split caused only by the 20-photo limit is labelled differently from a real change of day or place, so the interface never claims something the data does not support.
+- No geocoding. Place names remain the user's to supply, per the roadmap's data rules.
+- Import limit raised to 200 photos while a trace still holds 20. An import that fits one trace keeps the existing direct path untouched, so the flow already proven in QA is unchanged; grouping appears only when it is needed.
+- Review UI lists each candidate with its suggested date, photo count, split reason, and coordinates, and offers work-on-this-one, merge-with-next, and skip. Merge is hidden when it would exceed 20 photos.
+- Loading a candidate prefills the date and coordinate fact fields from its suggestions, which remain editable and still clear the fact confirmation when edited.
+- The review list shows how many AI drafts remain in the period, read from `/api/entitlements`, so a large import is not a dead end discovered at generation time.
+- Added `personal_photos_clustered`, `personal_candidate_opened`, and `personal_candidates_merged` to the analytics allowlist, carrying counts and booleans only.
+
+Verification:
+
+- Added `scripts/photo-clustering-tests.mts`: 49 of 49 checks. Coverage includes haversine distance against two real city pairs, one-morning grouping, the time-gap and distance thresholds and their configurability, a photo without coordinates not masking a later change of place, size-limit chunking preserving every photo exactly once, undated separation, unparseable dates treated as absent, out-of-range coordinates ignored, median resistance to an outlier, merge and remove behaviour including refusal to merge past the limit, and a realistic 200-photo five-day two-city trip.
+- One test failure during development was my test being wrong, not the code: when a change of city coincides with an overnight gap the gap is reported, because a long gap is the more informative explanation. The assertion was rewritten to check the property that matters, which is that two cities never share a candidate.
+- `npm run test:unit` is now 132 checks across four suites. `npm run test:e2e` re-run at 55 API and 34 billing checks with no regression. `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
+- Pre-existing `Date.now()` calls in the capture panel began failing the React Compiler purity rule once this component grew, even though they only run inside event handlers. The clock read was moved to a documented module-level helper rather than suppressed.
+
+Known limitation, stated in the interface rather than hidden: the review queue is held in memory, so a refresh clears it. A candidate already loaded into the working draft still persists, because that is the existing draft. Persisting a 200-photo queue needs a change to the IndexedDB draft store and was deliberately left out of this increment.
+
+Not accepted yet: section 2.1 of the manual testing guide needs a browser run with real photo libraries, including HEIC and photos with no EXIF at all.
 
 Pre-existing local residue left untouched, since it is not this session's to remove:
 

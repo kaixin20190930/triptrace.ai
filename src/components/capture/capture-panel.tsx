@@ -15,6 +15,14 @@ import {
 } from "@/lib/generate";
 import { getGuestDeviceId } from "@/lib/guest-id";
 import { isEntitlementCode } from "@/lib/plans";
+import {
+  canMergeWithNext,
+  clusterPhotos,
+  describeSplitReason,
+  mergeClusters,
+  type ClusterablePhoto,
+  type PhotoCluster,
+} from "@/lib/photo-clustering";
 import { downloadMemoryPoster } from "@/lib/poster";
 import { getTodayLabel } from "@/lib/format";
 import { extractExif, type ExtractedExif } from "@/lib/exif";
@@ -39,7 +47,13 @@ type UploadedPhoto = { key: string; url: string; filename: string };
 type PreparedPhoto = { uploadFile: File; visionDataUrl: string };
 type ExifCandidate = ExtractedExif & { filename: string };
 
+/** Photos a single trace can hold. Enforced server-side by the entitlement layer. */
 const MAX_PHOTOS = 20;
+/**
+ * Photos accepted in one import. A real trip produces far more than one trace can hold, so
+ * an import is allowed to be large and is then grouped into candidate traces.
+ */
+const MAX_IMPORT_PHOTOS = 200;
 const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
 const MAX_VISION_IMAGES = 4;
 
@@ -105,6 +119,18 @@ function hasDraftContent(memory: Memory | null, moment: string, place: string, f
 
 function fileIdentity(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+/**
+ * Clock read, deliberately at module scope.
+ *
+ * These timings are only taken inside event handlers, never during render, but the React
+ * Compiler cannot always prove that from inside a large component and reports `Date.now`
+ * as an impure render-phase call. Keeping the read here states the intent and keeps the
+ * handlers readable. Do not inline it back.
+ */
+function nowMs() {
+  return Date.now();
 }
 
 function mergeExifCandidates(candidates: ExifCandidate[]) {
@@ -211,8 +237,15 @@ export function CapturePanel() {
   const [savedState, setSavedState] = React.useState<"idle" | "cloud" | "local">("idle");
   const [restored, setRestored] = React.useState(false);
   const [aiConfigured, setAiConfigured] = React.useState<boolean | null>(null);
+  /** Candidate traces waiting to be drafted, produced by grouping a large import. */
+  const [pendingClusters, setPendingClusters] = React.useState<PhotoCluster[]>([]);
+  const [clustering, setClustering] = React.useState(false);
+  /** Remaining AI drafts in the current period, so a large import is not a dead end. */
+  const [draftsRemaining, setDraftsRemaining] = React.useState<number | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  /** Every imported file by clustering id, so a candidate can be turned back into files. */
+  const photoLibraryRef = React.useRef<Map<string, File>>(new Map());
   const previewUrlsRef = React.useRef<string[]>([]);
   const demoStartedRef = React.useRef(false);
   const textEnteredRef = React.useRef(false);
@@ -330,15 +363,19 @@ export function CapturePanel() {
     setSavedState("idle");
   }
 
+  async function readExif(selectedFiles: File[]) {
+    return Promise.all(
+      selectedFiles.map(async (file) => ({
+        ...(await extractExif(file)),
+        filename: file.name,
+      })),
+    );
+  }
+
   async function scanExif(selectedFiles: File[]) {
     setExifScanning(true);
     try {
-      const results = await Promise.all(
-        selectedFiles.map(async (file) => ({
-          ...(await extractExif(file)),
-          filename: file.name,
-        })),
-      );
+      const results = await readExif(selectedFiles);
       const candidate = mergeExifCandidates(
         results.filter((item) => item.capturedAt || (item.latitude !== null && item.longitude !== null)),
       );
@@ -401,26 +438,33 @@ export function CapturePanel() {
       return;
     }
 
-    const knownFiles = new Set(files.map(fileIdentity));
+    const pendingIdentities = new Set(
+      pendingClusters.flatMap((cluster) => cluster.photos.map((photo) => photo.id)),
+    );
+    const knownFiles = new Set([...files.map(fileIdentity), ...pendingIdentities]);
     const uniqueIncoming = incoming.filter((file) => {
       const identity = fileIdentity(file);
       if (knownFiles.has(identity)) return false;
       knownFiles.add(identity);
       return true;
     });
-    const availableSlots = Math.max(0, MAX_PHOTOS - files.length);
-    const accepted = uniqueIncoming.slice(0, availableSlots);
 
-    if (uniqueIncoming.length > availableSlots) {
+    // An import may be much larger than one trace. Only the amount that cannot be grouped
+    // at all is refused.
+    const alreadyHeld = files.length + pendingIdentities.size;
+    const importSlots = Math.max(0, MAX_IMPORT_PHOTOS - alreadyHeld);
+    const accepted = uniqueIncoming.slice(0, importSlots);
+
+    if (uniqueIncoming.length > importSlots) {
       trackEvent("personal_photo_validation_failed", {
         source: "capture_panel",
         reason: "too_many",
-        photoCount: files.length + uniqueIncoming.length,
+        photoCount: alreadyHeld + uniqueIncoming.length,
       });
       toast.error(
-        availableSlots > 0
-          ? `Only ${availableSlots} more ${availableSlots === 1 ? "photo fits" : "photos fit"}; the Atlas keeps up to ${MAX_PHOTOS}.`
-          : `The ${MAX_PHOTOS}-photo limit has been reached.`,
+        importSlots > 0
+          ? `Only ${importSlots} more ${importSlots === 1 ? "photo fits" : "photos fit"} in one import; the limit is ${MAX_IMPORT_PHOTOS}.`
+          : `The ${MAX_IMPORT_PHOTOS}-photo import limit has been reached.`,
       );
     }
     if (accepted.length === 0) {
@@ -430,17 +474,148 @@ export function CapturePanel() {
       return;
     }
 
-    const arr = [...files, ...accepted];
     trackEvent("personal_photo_import", {
       source: "capture_panel",
-      photoCount: arr.length,
+      photoCount: alreadyHeld + accepted.length,
     });
-    const addedPreviews = accepted.map((file) => URL.createObjectURL(file));
-    const nextPreviews = [...previews, ...addedPreviews];
+
+    for (const file of accepted) photoLibraryRef.current.set(fileIdentity(file), file);
+
+    // A small import that still fits one trace keeps the direct path, which is the flow
+    // already proven in QA. Grouping only appears when it is actually needed.
+    const fitsOneTrace =
+      pendingClusters.length === 0 && files.length + accepted.length <= MAX_PHOTOS;
+    if (fitsOneTrace) {
+      const arr = [...files, ...accepted];
+      const addedPreviews = accepted.map((file) => URL.createObjectURL(file));
+      const nextPreviews = [...previews, ...addedPreviews];
+      previewUrlsRef.current = nextPreviews;
+      setFiles(arr);
+      setPreviews(nextPreviews);
+      void scanExif(arr);
+      return;
+    }
+
+    void groupIntoCandidates(accepted);
+  }
+
+  /**
+   * Turns a large import into candidate traces.
+   *
+   * Photos already loaded into the working draft are folded back in, so switching from the
+   * direct path to grouping does not lose the current selection.
+   */
+  async function groupIntoCandidates(accepted: File[]) {
+    setClustering(true);
+    try {
+      const carriedOver = files;
+      const toRead = [...carriedOver, ...accepted];
+      const exif = await readExif(toRead);
+
+      const clusterable: ClusterablePhoto[] = toRead.map((file, index) => ({
+        id: fileIdentity(file),
+        filename: file.name,
+        capturedAt: exif[index]?.capturedAt ?? null,
+        latitude: exif[index]?.latitude ?? null,
+        longitude: exif[index]?.longitude ?? null,
+      }));
+      for (const file of carriedOver) photoLibraryRef.current.set(fileIdentity(file), file);
+
+      const existing = pendingClusters.flatMap((cluster) => cluster.photos);
+      const clusters = clusterPhotos([...existing, ...clusterable], {
+        maxPhotosPerCluster: MAX_PHOTOS,
+      });
+
+      trackEvent("personal_photos_clustered", {
+        photoCount: existing.length + clusterable.length,
+        clusterCount: clusters.length,
+        datedCount: clusters.reduce((sum, cluster) => sum + cluster.datedCount, 0),
+        locatedCount: clusters.reduce((sum, cluster) => sum + cluster.locatedCount, 0),
+      });
+
+      // The working draft is cleared because its photos now live in a candidate.
+      previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      previewUrlsRef.current = [];
+      setFiles([]);
+      setPreviews([]);
+      setPendingClusters(clusters);
+      void refreshDraftsRemaining();
+    } finally {
+      setClustering(false);
+    }
+  }
+
+  /** Reads the remaining AI allowance so the review list can warn before a wall is hit. */
+  async function refreshDraftsRemaining() {
+    try {
+      const query = user ? "" : `?guestId=${encodeURIComponent(getGuestDeviceId())}`;
+      const response = await fetch(`/api/entitlements${query}`, { credentials: "same-origin" });
+      if (!response.ok) return;
+      const body = await response.json();
+      const remaining = body?.usage?.aiGenerations?.remaining;
+      setDraftsRemaining(typeof remaining === "number" ? remaining : null);
+    } catch {
+      setDraftsRemaining(null);
+    }
+  }
+
+  /** Loads one candidate into the working draft and prefills its suggested facts. */
+  function loadCandidate(cluster: PhotoCluster) {
+    const selected = cluster.photos
+      .map((photo) => photoLibraryRef.current.get(photo.id))
+      .filter((file): file is File => Boolean(file));
+    if (!selected.length) {
+      toast.error("Those photos are no longer available. Import them again.");
+      return;
+    }
+
+    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    const nextPreviews = selected.map((file) => URL.createObjectURL(file));
     previewUrlsRef.current = nextPreviews;
-    setFiles(arr);
+
+    setFiles(selected);
     setPreviews(nextPreviews);
-    void scanExif(arr);
+    setMemory(null);
+    setFactsConfirmed(false);
+    setSavedState("idle");
+    setPendingClusters((current) => current.filter((item) => item.id !== cluster.id));
+
+    // Suggestions only, and only from metadata that exists. The user still confirms.
+    setConfirmedEventDate(toDateInputValue(cluster.suggestedEventAt));
+    setLatitude(cluster.suggestedLatitude);
+    setLongitude(cluster.suggestedLongitude);
+    setLatitudeInput(formatCoordinateCandidate(cluster.suggestedLatitude));
+    setLongitudeInput(formatCoordinateCandidate(cluster.suggestedLongitude));
+    setExifCandidate({
+      filename: cluster.photos[0]?.filename || "",
+      capturedAt: cluster.suggestedEventAt,
+      latitude: cluster.suggestedLatitude,
+      longitude: cluster.suggestedLongitude,
+    });
+
+    trackEvent("personal_candidate_opened", {
+      photoCount: selected.length,
+      hasDate: Boolean(cluster.suggestedEventAt),
+      hasCoordinates: cluster.suggestedLatitude !== null && cluster.suggestedLongitude !== null,
+    });
+  }
+
+  function discardCandidate(clusterId: string) {
+    setPendingClusters((current) => {
+      const target = current.find((item) => item.id === clusterId);
+      for (const photo of target?.photos ?? []) photoLibraryRef.current.delete(photo.id);
+      return current.filter((item) => item.id !== clusterId);
+    });
+  }
+
+  function mergeCandidateWithNext(clusterId: string) {
+    setPendingClusters((current) => {
+      const index = current.findIndex((item) => item.id === clusterId);
+      if (index === -1 || index === current.length - 1) return current;
+      const next = mergeClusters(current, clusterId, current[index + 1].id);
+      trackEvent("personal_candidates_merged", { clusterCount: next.length });
+      return next;
+    });
   }
 
   async function handleRemovePhoto(index: number) {
@@ -557,7 +732,7 @@ export function CapturePanel() {
     if (!moment.trim() && files.length === 0) return;
 
     markDemoStarted(moment.trim() ? "text" : "photo");
-    const generationStartedAt = Date.now();
+    const generationStartedAt = nowMs();
     trackEvent("personal_story_generate_started", {
       hasText: Boolean(moment.trim()),
       photoCount: files.length,
@@ -577,7 +752,7 @@ export function CapturePanel() {
       trackEvent("personal_story_generate_failed", {
         reason: "photo_preparation_failed",
         photoCount: files.length,
-        durationMs: Date.now() - generationStartedAt,
+        durationMs: nowMs() - generationStartedAt,
       });
       toast.error("One of these photos could not be prepared. Try JPEG, PNG, or WebP.");
       setGenerating(false);
@@ -678,7 +853,7 @@ export function CapturePanel() {
       trackEvent("personal_story_generate_failed", {
         reason: refusal.code,
         photoCount: files.length,
-        durationMs: Date.now() - generationStartedAt,
+        durationMs: nowMs() - generationStartedAt,
       });
       if (isEntitlementCode(refusal.code)) {
         trackEvent("paywall_viewed", { source: "capture_generate", reason: refusal.code });
@@ -693,7 +868,7 @@ export function CapturePanel() {
       trackEvent("personal_story_generate_failed", {
         reason: "generation_failed",
         photoCount: files.length,
-        durationMs: Date.now() - generationStartedAt,
+        durationMs: nowMs() - generationStartedAt,
       });
       toast.error(language === "zh" ? "生成失败，请稍后再试。" : "Generation failed. Please try again.");
       setGenerating(false);
@@ -721,7 +896,7 @@ export function CapturePanel() {
       provider: finalMemory.ai?.source || "unknown",
       model: finalMemory.ai?.model || "unknown",
       photoCount: files.length,
-      durationMs: Date.now() - generationStartedAt,
+      durationMs: nowMs() - generationStartedAt,
     });
   }
 
@@ -932,16 +1107,98 @@ export function CapturePanel() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={generating || saving || files.length >= MAX_PHOTOS}
+            disabled={generating || saving || clustering}
             className="w-full rounded-lg border border-dashed border-border px-3 py-2 text-left text-sm text-muted-foreground hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {files.length >= MAX_PHOTOS
-              ? `${MAX_PHOTOS} photos selected · limit reached`
+            {clustering
+              ? "Reading photo dates and places..."
               : files.length
-                ? `${files.length} ${files.length === 1 ? "photo" : "photos"} selected · add more`
+                ? `${files.length} ${files.length === 1 ? "photo" : "photos"} in this trace · add more`
                 : t("capture.uploadTitle")}
           </button>
-          <p className="text-xs text-muted-foreground">{t("capture.uploadHint")}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("capture.uploadHint")} A trace holds up to {MAX_PHOTOS} photos. Import more and they
+            are grouped into separate traces by date and place.
+          </p>
+
+          {pendingClusters.length > 0 && (
+            <div className="rounded-xl border border-primary/40 bg-primary/5 p-3">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-primary">
+                Candidate traces
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {pendingClusters.reduce((sum, cluster) => sum + cluster.photos.length, 0)} photos
+                grouped into {pendingClusters.length}{" "}
+                {pendingClusters.length === 1 ? "candidate" : "candidates"} by date and location.
+                Nothing is saved yet, and every suggested date and coordinate stays editable.
+                {draftsRemaining !== null && (
+                  <span className="mt-1 block">
+                    {draftsRemaining > 0
+                      ? `You can draft ${draftsRemaining} more with AI in this period.`
+                      : "You have no AI drafts left in this period."}
+                  </span>
+                )}
+              </p>
+
+              <ul className="mt-3 space-y-2">
+                {pendingClusters.map((cluster, index) => (
+                  <li key={cluster.id} className="rounded-lg border border-border bg-background p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-sm font-medium">
+                        {index + 1}.{" "}
+                        {cluster.suggestedEventAt
+                          ? new Date(cluster.suggestedEventAt).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })
+                          : "Date not detected"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {cluster.photos.length} {cluster.photos.length === 1 ? "photo" : "photos"}
+                      </p>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {describeSplitReason(cluster.reason)}
+                      {cluster.suggestedLatitude !== null && cluster.suggestedLongitude !== null
+                        ? ` · ${cluster.suggestedLatitude.toFixed(3)}, ${cluster.suggestedLongitude.toFixed(3)}`
+                        : " · no coordinates found"}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => loadCandidate(cluster)}
+                        disabled={generating || saving}
+                        className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-60"
+                      >
+                        Work on this one
+                      </button>
+                      {canMergeWithNext(pendingClusters, cluster.id, MAX_PHOTOS) && (
+                        <button
+                          type="button"
+                          onClick={() => mergeCandidateWithNext(cluster.id)}
+                          className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold transition hover:bg-accent/20"
+                        >
+                          Merge with next
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => discardCandidate(cluster.id)}
+                        className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:bg-accent/20"
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                This review list is not saved yet. Refreshing the page clears it, though a trace you
+                have already saved is unaffected.
+              </p>
+            </div>
+          )}
           {previews.length > 0 && (
             <div className="flex gap-2 overflow-x-auto pt-1">
               {previews.map((src, i) => (

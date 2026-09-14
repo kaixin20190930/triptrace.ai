@@ -72,7 +72,7 @@ Every new user-facing feature must update `docs/manual-testing-guide.md`.
 | M2-001 | NOT_STARTED | Build no-account personal demo | A visitor can create one temporary Atlas without signing up |
 | M2-002 | NOT_STARTED | Import 3-20 photos | Import handles valid images, rejects invalid files, and displays progress |
 | M2-003 | NOT_STARTED | Extract EXIF time and location | Available EXIF fields populate factual trace fields |
-| M2-004 | NOT_STARTED | Cluster photos into traces | Nearby time/location groups become editable candidate traces |
+| M2-004 | IN_PROGRESS | Cluster photos into traces | Grouping, merge, skip, and suggested-fact prefill are implemented and covered by 49 unit checks; browser QA in section 2.1 of the manual guide is outstanding, and the review queue is not yet persisted across a refresh |
 | M2-005 | NOT_STARTED | Build factual correction editor | Time, place, people, event type, and summary can be corrected |
 | M2-006 | NOT_STARTED | Generate AI story separately | AI output writes only narrative fields and records model/source metadata |
 | M2-007 | NOT_STARTED | Build personal 2D Atlas | Personal traces render on the shared synchronized map and timeline |

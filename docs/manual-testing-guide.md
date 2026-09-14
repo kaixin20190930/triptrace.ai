@@ -56,14 +56,42 @@ Notes:
 10. At mobile width, confirm the desktop sidebar disappears and all five primary routes remain reachable.
 11. Confirm the unfinished Chinese locale is not exposed in the launch interface.
 
+## 2.1 Large Imports And Candidate Traces
+
+A trace holds at most 20 photos, but a real trip produces hundreds. A large import is
+grouped into candidate traces by date and location, which the user reviews before anything
+is generated or saved.
+
+1. Import 5 photos and confirm they go straight into one trace, with no review list. Grouping must not appear when it is not needed.
+2. Import 60 photos spanning several days and confirm a `Candidate traces` list appears, the working trace is emptied, and the total photo count matches what you imported.
+3. Confirm each candidate shows its suggested date, photo count, the reason it was split, and either coordinates or `no coordinates found`.
+4. Confirm no candidate contains more than 20 photos.
+5. Confirm candidates are listed oldest first.
+6. Confirm the reason text distinguishes a long gap, a change of place, and a split caused only by the 20-photo limit. The last one must not claim the day or place changed.
+7. Import photos with no EXIF date and confirm they form their own candidate labelled `No date found in these photos`, and that this candidate shows no suggested date. A date must never be borrowed from other photos.
+8. Click `Work on this one` and confirm those photos load into the trace, the suggested date and coordinates prefill the fact fields, and that candidate leaves the list.
+9. Confirm the prefilled date and coordinates are still editable, and that editing them clears the fact confirmation as usual.
+10. Generate, confirm the facts, and save. Confirm the remaining candidates are still listed afterwards so the next one can be started.
+11. Click `Merge with next` and confirm two candidates become one, the photo count adds up, and the suggested date becomes the earlier of the two.
+12. Confirm `Merge with next` is hidden when merging would exceed 20 photos.
+13. Confirm `Merge with next` is hidden on the last candidate.
+14. Click `Skip` and confirm that candidate disappears and its photos are not saved anywhere.
+15. While signed in, confirm the list states how many AI drafts remain in the period, and that the number matches `/api/entitlements`.
+16. With no AI drafts left, confirm the list says so before you start working on a candidate rather than failing at generation time.
+17. Import more photos while a review list is showing and confirm the new photos are grouped in with the existing candidates rather than replacing them.
+18. Re-import a photo that is already in a candidate and confirm the duplicate is skipped.
+19. Import more than 200 photos and confirm the interface explains the import limit.
+20. Confirm the review list states that it is not saved, then refresh and confirm the list is gone while any trace already saved is unaffected.
+21. Confirm a candidate loaded into the working trace still persists through a refresh, because it is the active draft.
+
 ## 3. Capture Baseline
 
 1. Create a text-only draft.
 2. Create a photo-only draft.
 3. Create a combined words-and-photos draft.
 4. Select several photos, click the upload control again, and confirm new photos append instead of replacing the existing selection.
-5. Add photos in multiple batches until the total reaches 20; confirm all earlier photos remain and the upload control becomes disabled at the 20-photo limit.
-6. With fewer than 20 photos selected, choose more photos than the remaining slots; confirm only the available number is appended and a clear limit message appears.
+5. Add photos in multiple batches while the total stays at or below 20; confirm all earlier photos remain in the same trace.
+6. Add a batch that pushes the total above 20; confirm the selection is grouped into candidate traces instead of being truncated, and see section 2.1.
 7. Select the same file again while it is still present and confirm the duplicate is skipped.
 8. Confirm every selected photo has a visible remove button in its top-right corner.
 9. Remove a middle photo and confirm only that photo disappears, the count decreases, and the upload control becomes available again.
@@ -73,7 +101,7 @@ Notes:
 13. After removing a photo, select that same file again and confirm it can be added normally.
 14. After generating but before saving, remove a photo and confirm it also disappears from the generated draft and is excluded from permanent save.
 15. Confirm saved-cloud state does not expose the draft-only remove control.
-16. Select 21 photos and confirm only the first 20 are accepted and the interface explains the limit.
+16. Select 21 photos and confirm they are grouped into candidate traces rather than truncated; see section 2.1.
 17. Select a non-image file and an image over 10 MB; confirm each has a specific error.
 18. Confirm only a bounded representative set is sent for AI vision while all selected photos remain in the local preview.
 19. Select a JPEG with EXIF capture date and confirm the local photo facts panel fills the event date.
