@@ -1,6 +1,6 @@
 # TripTrace.ai Manual Testing Guide
 
-Last updated: 2026-09-01 Asia/Shanghai
+Last updated: 2026-09-02 Asia/Shanghai
 
 This is the canonical human QA guide for the rebuilt English-first AI Life Atlas.
 
@@ -17,6 +17,7 @@ Rule:
 3b. Run `npm run test:unit`; it needs no server, no Stripe account, and must report all checks passing.
 3c. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
 3c-2. Run `STRIPE_WEBHOOK_SECRET=<local secret> ADMIN_TASK_TOKEN=<local token> npm run test:billing -- http://127.0.0.1:3000` and confirm every check passes.
+3c-3. Run `npm run test:account -- http://127.0.0.1:3000` and confirm every check passes. It needs the `unzip` command available.
 3d. Run `npm run qa:cleanup` afterwards and confirm no `qa-*@example.invalid` account remains in local D1.
 3e. Shortcut for all of the above: `npm run test:all` runs lint, type checking, the unit suites, and both HTTP suites, starting and stopping its own server. Run `npm run build` only after it finishes, never alongside it.
 4. Test the current change on desktop and mobile widths.
@@ -29,9 +30,10 @@ Rule:
 
 | Command | Needs a server | Needs secrets | What it covers |
 |---|---|---|---|
-| `npm run test:unit` | no | no | Map projection and geometry, Stripe signatures and event mapping, checkout payload, media retry schedule |
+| `npm run test:unit` | no | no | Map geometry, Stripe signatures and event mapping, media retry schedule, photo clustering, ZIP writer verified with the system `unzip` |
 | `npm run test:api` | yes | optional | Privacy, ownership, deletion, entitlements, quotas, concurrency, media cleanup queue, retention endpoint |
 | `npm run test:billing` | yes | optional | Webhook signatures, idempotency, event ordering, plan transitions, billing analytics |
+| `npm run test:account` | yes | no | Export contents, real archive integrity, deletion guards, and what remains in the database afterwards |
 | `npm run test:e2e` | starts its own | no | Applies local migrations, runs both HTTP suites, removes its test data |
 | `npm run test:all` | starts its own | no | Lint, types, unit suites, then `test:e2e` |
 
@@ -310,6 +312,43 @@ object is a second step that can fail, so failures are queued and retried.
 3. Confirm the response contains no story text, no coordinates, no emails, and no event properties of any kind.
 4. Add `?days=7` and confirm the window narrows; add `?days=999` and confirm it is capped at the 90-day retention window.
 5. Add `?userId=<id>` and confirm the counts narrow to that account.
+
+## 9.4 Export And Account Deletion
+
+Both are treated as rights, not features. Export is never gated behind a plan, and deletion
+must actually delete.
+
+### 9.4.1 Export
+
+1. Open `/plan` while signed in and confirm a `Your data` section offers a JSON export and an archive with photos.
+2. On the Free plan, confirm both downloads work. Export must never require payment.
+3. Download the JSON and confirm it contains your account, plan, usage, every trace, a media list, and your own activity history.
+4. Confirm each trace keeps the fields you confirmed separate from the AI-drafted title, story, and tags, and records which model drafted it.
+5. Confirm the file contains no password hash and no other account's data.
+6. Confirm the JSON opens in a plain text editor and explains its own structure in `readme`.
+7. Download the archive, open it with any unzip tool, and confirm it holds `manifest.json` plus the photo files themselves.
+8. Confirm each `archivePath` in the manifest matches a real entry in the archive.
+9. Delete a photo from a trace, export again, and confirm the removed photo is no longer listed.
+10. For an account whose photos exceed the archive limits, confirm the refusal explains the limit and points to the JSON export rather than failing silently.
+11. Sign out and request `/api/export` directly; confirm `401`.
+12. Confirm requesting an export from one account never returns another account's traces.
+
+### 9.4.2 Account Deletion
+
+1. On `/plan`, confirm the delete control is visually separated and states that deletion cannot be undone.
+2. Confirm the button stays disabled until both the password and the typed `DELETE` confirmation are present.
+3. Submit a wrong password and confirm the refusal says so and changes nothing. A session alone must never be enough to destroy an Atlas.
+4. With a live Founding Plus subscription, confirm deletion is refused and the message tells you to cancel billing first. Nobody may be billed for a deleted account.
+5. Cancel the subscription, then delete, and confirm it succeeds.
+6. After deletion, confirm you are signed out, the app returns to the homepage, and the session cookie is cleared.
+7. Try to sign in with the deleted credentials and confirm it fails. The account must be gone, not hidden.
+8. Reload a previously copied media URL from the deleted account and confirm the photo is no longer served.
+9. Query local D1 and confirm no row in `users`, `memories`, `sessions`, `subscriptions`, `usage_counters`, or `analytics_events` still references that account id.
+10. Confirm the response reports how many traces and media objects were removed, and whether any media had to be queued for retry.
+11. Confirm a media object that could not be deleted appears in the cleanup queue from section 8.1 rather than being forgotten.
+
+Known gap: share links do not exist yet (`M3-005`), so the share-link half of `M3-008` cannot
+be tested. It must be covered when sharing lands.
 
 ## 10. Plans, Quotas, And Server-Side Limits
 

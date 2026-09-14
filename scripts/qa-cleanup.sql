@@ -34,7 +34,8 @@ DELETE FROM users WHERE email LIKE 'qa-%@example.invalid';
 DELETE FROM media_cleanup_queue WHERE media_key LIKE 'users/guard/%';
 
 DELETE FROM usage_counters WHERE user_id LIKE 'guest:%';
-DELETE FROM rate_limits WHERE bucket_key LIKE 'generate_memory%';
-DELETE FROM rate_limits WHERE bucket_key LIKE 'billing_%';
+-- Rate limit buckets are ephemeral infrastructure state, not user data. Leaving them behind
+-- makes a second test run in the same hour fail against limits the first run consumed.
+DELETE FROM rate_limits;
 -- Local webhook fixtures only; the billing tests are the only source of these rows here.
 DELETE FROM stripe_events;

@@ -1,6 +1,6 @@
 # Life Atlas MVP Progress
 
-Last updated: 2026-09-01 Asia/Shanghai
+Last updated: 2026-09-02 Asia/Shanghai
 
 Source of truth:
 
@@ -76,7 +76,7 @@ Remaining engineering work:
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
 | Historical Atlas | NOT_STARTED | `/explore` is a placeholder/acquisition surface only |
 | Analytics | IN_PROGRESS | Browser events through generation and fact confirmation are verified in local D1; the 90-day retention sweep is implemented and verified; signed-in first-save and production evidence remain |
-| Sharing/export/deletion | IN_PROGRESS | Copy, poster export, and owner-only trace deletion exist, with a durable retry queue and operator report for media that R2 refuses to delete; selected share links and account deletion are incomplete |
+| Export and deletion | IN_PROGRESS | Complete JSON export, ZIP archive with photos, per-trace poster, owner-only trace deletion with a durable media retry queue, and full account deletion with password re-entry all exist and are verified; selected share links (`M3-005/006`) remain |
 | Entitlements and server limits | DONE | Plan resolution, usage metering, and server enforcement on generate/media/memories are implemented and verified by 37 automated API checks |
 | Automated tests | DONE (CI unobserved) | 172 checks total: 83 unit with no server, 55 API/privacy/entitlement, 34 billing. `npm run test:all` runs everything and manages its own server. A CI workflow is committed but has never run, because the repository has no remote |
 | Billing | DONE (pending Stripe account) | Checkout, customer portal, signed idempotent webhook, `/plan` page, and billing analytics are implemented and verified with locally signed payloads; real Stripe keys, prices, and a test-mode end-to-end run remain |
@@ -368,6 +368,42 @@ Known limitation, stated in the interface rather than hidden: the review queue i
 
 Not accepted yet: section 2.1 of the manual testing guide needs a browser run with real photo libraries, including HEIC and photos with no EXIF at all.
 
+Data export and account deletion implemented (`M3-007`, `M3-008`):
+
+Both are compliance requirements for the intended market, not optional features, and both were treated as rights rather than product surface.
+
+- Added `src/lib/server/zip.ts`, a hand-written streaming ZIP writer. A dependency was avoided because the need is narrow: bundle a manifest and a set of already-compressed JPEGs. Every entry is stored uncompressed, since re-compressing JPEG data costs CPU for almost no size gain. Memory stays flat because each entry is buffered only long enough to compute its CRC32 and length.
+- Added `src/lib/server/account-data.ts` to build the export payload and to perform deletion.
+- Added `GET /api/export` returning complete JSON: account, plan, usage counters, every trace with confirmed facts kept separate from the AI narrative and its model provenance, the media inventory, and the account's own analytics rows.
+- Added `GET /api/export/archive` returning a ZIP with `manifest.json` plus the photo files. This is the export that makes portability real, because the JSON alone references photos by URL, which is useless once the account is gone.
+- Added `DELETE /api/account` for complete deletion.
+- Added a `Your data` section to `/plan` with both exports and a guarded delete flow.
+
+Four decisions worth recording:
+
+- Export is available on every plan and never consults the entitlement layer. Charging someone to retrieve their own memories would contradict the promise that the content is theirs, and portability is expected under GDPR and CCPA. The earlier idea of gating a composed export behind payment was dropped for this reason.
+- Deletion requires the current password, not just a session. A borrowed or stolen session must not be able to destroy someone's Atlas.
+- Deletion is refused while a live paid subscription exists, with `409 account_has_active_subscription`, so nobody is ever billed for an account that no longer exists. Cancelling automatically through the Stripe API would be friendlier and is recorded as a follow-up; refusing is safer and fully testable today.
+- Analytics rows for a deleted account are deleted rather than anonymised. Keeping a pseudonymous row after an erasure request is harder to defend than losing some funnel history, and the product is early enough that the history is cheap.
+- Archive guards are CPU-driven, not memory-driven: streaming keeps memory flat, but checksumming a very large archive inside one request would not finish. Sizes are read from R2 metadata so an oversized archive is refused before any bytes are read, rather than failing halfway through a download.
+
+Verification:
+
+- Added `scripts/zip-unit-tests.mts`: 16 of 16 checks. CRC32 is checked against published known answers, and the archives are written to disk and verified with the system `unzip`, including an integrity test, entry listing, byte-identical text extraction, a binary entry covering all 256 byte values, nested paths, a skipped unreadable entry, and a 40-entry archive to confirm the central directory offsets stay correct.
+- A real bug was found by these tests: the stream deadlocked when an entry was skipped, because `pull` returned without enqueuing and nothing else triggered another pull. It now loops until it either enqueues or finishes.
+- Added `scripts/api-account-data-tests.mjs`: 34 of 34 checks. Export contents, downloadable headers, fact/narrative separation, model provenance, media paths matching real archive entries, absence of any password hash, cross-account isolation, and the archive passing a real integrity check. Deletion covers the missing-password and wrong-password refusals, the active-subscription guard, successful deletion, cookie clearing, inability to sign in afterwards, media no longer being served, and a direct database sweep confirming no row in `users`, `memories`, `sessions`, `subscriptions`, `usage_counters`, or `analytics_events` still references the account.
+- `npm run test:unit` is now 148 checks across five suites. `npm run test:e2e` runs three HTTP suites totalling 124 checks, aggregates all three exit codes, and was confirmed to exit non-zero on failure and zero on success.
+- A full run leaves local storage exactly as it found it: seven pre-existing R2 objects, five pre-existing accounts, two pre-existing memories, and an empty media cleanup queue.
+- `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
+Two defects in my own tooling, found and fixed during this work:
+
+- Stopping the dev server with `SIGTERM` could leave `.next/dev/types` truncated, which then failed `tsc --noEmit` with errors that appeared to come from application code. The runner now waits for the server to actually exit before removing that generated directory, and never lets a failure there fail an otherwise green run. The first attempt at this fix raced with the still-running server and turned a fully passing run into an `ENOTEMPTY` failure, which is why the wait was added.
+- `scripts/qa-cleanup.sql` did not clear rate-limit buckets, so a second test run inside the same hour failed against limits the first run had consumed. The whole `rate_limits` table is now cleared, since it is ephemeral infrastructure state rather than user data. The account-deletion throttle was also raised from five to ten per hour, which still makes password guessing useless against PBKDF2 while leaving room for a mistyped password and for several people behind one shared address.
+
+A weakness in my own assertions was also corrected. The account test originally proved only that media returned `404` after deletion, but that route resolves access through a referencing trace, so a `404` proves authorisation failed rather than that the object was removed. The test now asserts the reported `mediaDeleted` count, and a direct storage check confirmed a full run leaves exactly the pre-existing objects behind. The entitlement suite likewise now checks every uploaded key is removed rather than only the first, because a single silent failure there would orphan an object that nothing else would notice.
+
+Known gap, recorded rather than glossed over: `M3-008` also names share links, which do not exist yet (`M3-005`). That half cannot be tested until sharing lands, and the manual guide says so.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -400,6 +436,10 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-01 | An unrecognised Stripe price maps to Free | A misconfigured or foreign price must never be able to grant a paid plan |
 | 2026-09-01 | Failed media deletions are queued and retried, not just reported | "Deleting a trace deletes its photos" is only true if something guarantees the storage delete eventually happens |
 | 2026-09-01 | The media sweep never deletes a key a surviving trace references | A stale queue entry must not be able to strip a photo from a live memory |
+| 2026-09-02 | Photos with no date are never merged into a dated group | Assigning a date the photo does not have is exactly what the fact contract forbids |
+| 2026-09-02 | Data export is free on every plan and never consults entitlements | Retrieving your own memories is a portability right, not a paid feature |
+| 2026-09-02 | Account deletion requires the password, not just a session | A borrowed or stolen session must not be able to destroy someone's Atlas |
+| 2026-09-02 | Deletion is refused while a paid subscription is live | Nobody may be billed for an account that no longer exists |
 
 ## Blockers
 

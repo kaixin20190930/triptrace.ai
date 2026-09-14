@@ -269,16 +269,17 @@ async function run() {
     `status=${atLimitResponse.status} files=${(atLimitBody?.files || []).length}`,
   );
   const uploadedKeys = (atLimitBody?.files || []).map((file) => file.key);
+  const deleteStatuses = [];
   for (const key of uploadedKeys) {
-    await owner.fetch(`/api/media?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    const response = await owner.fetch(`/api/media?key=${encodeURIComponent(key)}`, { method: "DELETE" });
+    deleteStatuses.push(response.status);
   }
-  const orphanCheck = uploadedKeys.length
-    ? await owner.fetch(`/api/media?key=${encodeURIComponent(uploadedKeys[0])}`)
-    : null;
+  // Every key is checked, not just the first. A single silent failure here would leave an
+  // orphaned object in storage that nothing else would ever notice.
   check(
-    "unreferenced uploaded media can be cleaned up by its owner",
-    !orphanCheck || orphanCheck.status === 404,
-    `status=${orphanCheck?.status}`,
+    "every unreferenced uploaded object is cleaned up by its owner",
+    uploadedKeys.length > 0 && deleteStatuses.every((status) => status === 200),
+    `statuses=${[...new Set(deleteStatuses)].join(",")}`,
   );
 
   // ---------------------------------------------------------------- map data contract

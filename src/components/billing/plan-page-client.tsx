@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Check, CreditCard, Loader2 } from "lucide-react";
+import { Check, CreditCard, Download, Loader2, Trash2 } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { useAuth } from "@/lib/auth-context";
 import { getGuestDeviceId } from "@/lib/guest-id";
@@ -53,6 +53,10 @@ export function PlanPageClient() {
   const [data, setData] = React.useState<Entitlements | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [pending, setPending] = React.useState<"monthly" | "annual" | "portal" | null>(null);
+  const [busy, setBusy] = React.useState<"json" | "archive" | "delete" | null>(null);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deletePassword, setDeletePassword] = React.useState("");
+  const [deleteConfirm, setDeleteConfirm] = React.useState("");
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -131,6 +135,65 @@ export function PlanPageClient() {
       toast.error("The billing portal is unavailable.");
     } finally {
       setPending(null);
+    }
+  }
+
+  /**
+   * Downloads an export.
+   *
+   * Fetched rather than opened as a plain link so a refusal, such as an archive that is too
+   * large, can be shown as a readable message instead of dumping JSON into a browser tab.
+   */
+  async function downloadExport(path: string) {
+    setBusy(path.endsWith("archive") ? "archive" : "json");
+    try {
+      const response = await fetch(path, { credentials: "same-origin" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        toast.error(body?.error?.message || "The export could not be prepared.");
+        return;
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const suggested = disposition.match(/filename="([^"]+)"/)?.[1];
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = suggested || (path.endsWith("archive") ? "triptrace-atlas.zip" : "triptrace-export.json");
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Export downloaded.");
+    } catch {
+      toast.error("The export could not be prepared.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteAccount() {
+    setBusy("delete");
+    try {
+      const response = await fetch("/api/account", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ password: deletePassword, confirm: deleteConfirm }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        toast.error(body?.error?.message || "The account could not be deleted.");
+        return;
+      }
+      toast.success("Your account and its contents have been deleted.");
+      // A full reload is the honest end state: every cached view belongs to an account that
+      // no longer exists.
+      window.location.assign("/");
+    } catch {
+      toast.error("The account could not be deleted.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -249,6 +312,123 @@ export function PlanPageClient() {
               Sign in before upgrading so the subscription attaches to your Atlas.
             </p>
           )}
+        </section>
+      )}
+
+      {user && (
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Your data</p>
+          <h2 className="mt-1 font-serif text-3xl font-semibold">Yours to take, yours to erase</h2>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            Export works on every plan, including Free. Retrieving your own memories is a right,
+            not a paid feature.
+          </p>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => downloadExport("/api/export")}
+              disabled={busy !== null}
+              className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold transition hover:bg-accent/20 disabled:opacity-60"
+            >
+              {busy === "json" ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="h-4 w-4" aria-hidden />
+              )}
+              Export everything as JSON
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadExport("/api/export/archive")}
+              disabled={busy !== null}
+              className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold transition hover:bg-accent/20 disabled:opacity-60"
+            >
+              {busy === "archive" ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="h-4 w-4" aria-hidden />
+              )}
+              Download archive with photos
+            </button>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            The JSON file holds every trace with your confirmed facts kept separate from the
+            AI-drafted story. The archive adds the photo files themselves, which is what makes the
+            export usable after an account is gone.
+          </p>
+
+          <div className="mt-6 rounded-xl border border-destructive/40 bg-destructive/5 p-4">
+            <p className="text-sm font-semibold text-foreground">Delete this account</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              This removes your traces, your photos, your saved facts, and your account. It cannot
+              be undone, and there is no hidden copy. Export first if you want to keep anything.
+            </p>
+            {!deleteOpen ? (
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                className="mt-3 inline-flex items-center gap-2 rounded-full border border-destructive/60 px-4 py-2 text-sm font-semibold text-destructive transition hover:bg-destructive/10"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+                Delete account
+              </button>
+            ) : (
+              <form
+                className="mt-3 space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void deleteAccount();
+                }}
+              >
+                <div>
+                  <label htmlFor="delete-password" className="text-xs font-medium">
+                    Confirm your password
+                  </label>
+                  <input
+                    id="delete-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={deletePassword}
+                    onChange={(event) => setDeletePassword(event.target.value)}
+                    className="mt-1 w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="delete-confirm" className="text-xs font-medium">
+                    Type <span className="font-mono">DELETE</span> to confirm
+                  </label>
+                  <input
+                    id="delete-confirm"
+                    value={deleteConfirm}
+                    onChange={(event) => setDeleteConfirm(event.target.value)}
+                    className="mt-1 w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="submit"
+                    disabled={busy !== null || deleteConfirm !== "DELETE" || !deletePassword}
+                    className="inline-flex items-center gap-2 rounded-full bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground transition disabled:opacity-60"
+                  >
+                    {busy === "delete" && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+                    Permanently delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteOpen(false);
+                      setDeletePassword("");
+                      setDeleteConfirm("");
+                    }}
+                    className="rounded-full border border-border px-4 py-2 text-sm font-semibold"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </section>
       )}
 

@@ -11,7 +11,7 @@
 // `.next` and will invalidate the development server's chunks.
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 
 const DEV_VARS = ".dev.vars";
@@ -103,10 +103,39 @@ async function waitForReady(baseUrl) {
   return false;
 }
 
+/** Stops the server and waits for it to actually exit, so nothing is still writing. */
+function stopDevServer(child) {
+  if (!child || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = setTimeout(resolve, 10_000);
+    child.once("exit", () => {
+      clearTimeout(done);
+      resolve();
+    });
+    child.kill("SIGTERM");
+  });
+}
+
+/**
+ * Removes Next's generated dev types.
+ *
+ * Stopping the dev server can leave `.next/dev/types` half-written, which then fails
+ * `tsc --noEmit` with errors that look like they come from application code. The directory
+ * is generated, so removing it is always safe, and a failure here must never fail the run.
+ */
+function discardGeneratedDevTypes() {
+  try {
+    rmSync(".next/dev", { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    // A residual race is harmless; the next build regenerates the directory.
+  }
+}
+
 async function main() {
   const { values, createdDevVars } = prepareEnvironment();
   let devServer = null;
 
+  /** Last-resort cleanup. Must stay synchronous and must never throw. */
   const cleanup = () => {
     if (devServer && !devServer.killed) devServer.kill("SIGTERM");
     if (createdDevVars && existsSync(DEV_VARS)) unlinkSync(DEV_VARS);
@@ -153,13 +182,23 @@ async function main() {
   log("Billing suite");
   const billingResult = await run("node", ["scripts/api-billing-tests.mjs", baseUrl], { env: childEnv });
 
+  log("Export and account deletion suite");
+  const accountResult = await run("node", ["scripts/api-account-data-tests.mjs", baseUrl], { env: childEnv });
+
   log("Removing test data");
   await run("npx", ["wrangler", "d1", "execute", "triptrace", "--local", "--file=scripts/qa-cleanup.sql"], {
     stdio: "ignore",
   });
 
-  log(apiResult === 0 && billingResult === 0 ? "All HTTP suites passed" : "Failures reported above");
-  process.exit(apiResult === 0 && billingResult === 0 ? 0 : 1);
+  // The server has to be fully stopped before the generated directory is removed. Deleting
+  // it while the server is still writing races and fails with ENOTEMPTY.
+  await stopDevServer(devServer);
+  devServer = null;
+  discardGeneratedDevTypes();
+
+  const allPassed = apiResult === 0 && billingResult === 0 && accountResult === 0;
+  log(allPassed ? "All HTTP suites passed" : "Failures reported above");
+  process.exit(allPassed ? 0 : 1);
 }
 
 main().catch((error) => {

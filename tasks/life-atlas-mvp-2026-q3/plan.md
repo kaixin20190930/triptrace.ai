@@ -90,8 +90,8 @@ Every new user-facing feature must update `docs/manual-testing-guide.md`.
 | M3-004 | NOT_STARTED | Add revisit email | Users can opt in and unsubscribe; links open the correct trace |
 | M3-005 | NOT_STARTED | Add selected-trace sharing | Only explicitly selected traces become accessible by share link |
 | M3-006 | NOT_STARTED | Add share-link revocation | A user can revoke a link and immediately remove access |
-| M3-007 | NOT_STARTED | Add digital export | JSON and at least one media-ready export format are available |
-| M3-008 | NOT_STARTED | Add complete deletion | Trace, media, share links, and account deletion are testable |
+| M3-007 | IN_PROGRESS | Add digital export | Complete JSON export and a ZIP archive containing the photos are implemented and covered by 50 checks; the per-trace poster is the existing media-ready format. Browser QA in section 9.4.1 is outstanding |
+| M3-008 | IN_PROGRESS | Add complete deletion | Trace, media, and account deletion are implemented and verified, including password re-entry, an active-subscription guard, and a post-deletion database sweep. Share links do not exist yet (`M3-005`), so that half cannot be tested |
 | M3-009 | NOT_STARTED | Add GDPR/CCPA-facing controls | Consent, export, deletion, privacy notice, and AI disclosure are available |
 
 ## Milestone M4: Commercial MVP
