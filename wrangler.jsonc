@@ -17,6 +17,21 @@
 			"service": "triptrace-ai-next"
 		}
 	],
+	// Declaring any route makes Wrangler disable workers.dev unless it is asked for explicitly,
+	// which takes the deployment offline as a side effect. Keep this true so the fallback URL
+	// survives regardless of what happens to the apex.
+	"workers_dev": true,
+	// A route rather than a custom domain, because the apex still carries the DNS record that
+	// the retired Pages project left behind, and a custom domain refuses to claim a hostname
+	// that already has externally managed records. The route intercepts at the edge before any
+	// origin fetch, so it serves correctly regardless. Declared here so that a deploy cannot
+	// silently drop it and take the apex offline.
+	"routes": [
+		{
+			"pattern": "triptrace.ai/*",
+			"zone_name": "triptrace.ai"
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",

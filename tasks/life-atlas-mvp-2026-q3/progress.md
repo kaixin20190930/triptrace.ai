@@ -577,8 +577,35 @@ The rebuilt repository is deployed and correctly wired as of version
   bundled by `@base-ui/react`, not our source. The configuration drift warning was the fix
   landing: it reported the remote dashboard config being overridden by the corrected local one.
 
-Deployment target: `https://triptrace-ai-next.liukai19911010.workers.dev`. The apex domain
-`triptrace.ai` does **not** point here; see the legacy inventory below.
+### The apex now serves the rebuilt product
+
+`https://triptrace.ai` serves this Worker as of 2026-09-15. Before that it served the retired
+Chinese-language Pages project, which had been live on the apex since May.
+
+How it is wired, and why it is not a custom domain:
+
+- The custom domain attach was refused with `100117 Hostname 'triptrace.ai' already has
+  externally managed DNS records`. Detaching the domain from the Pages project does not delete
+  the DNS record it created, and the current Wrangler token has `zone (read)` but no DNS write
+  scope, so the stale record cannot be removed from here.
+- A Workers route `triptrace.ai/*` was used instead. It intercepts at the edge before any origin
+  fetch, so it serves correctly with the stale record still in place. It is declared in
+  `wrangler.jsonc` rather than clicked in the dashboard, so a deploy cannot silently drop it.
+- `www.triptrace.ai` already 301s to the apex through a pre-existing rule, ahead of any Worker,
+  so it needs nothing.
+
+Worth tidying later, not urgent: delete the stale apex DNS record and convert the route into a
+proper custom domain. That needs a token with DNS edit scope.
+
+One trap worth recording, because it took the site down for a few minutes: declaring any route
+makes Wrangler disable `workers.dev` unless `workers_dev` is set explicitly. The first attempt
+therefore removed the fallback URL at the same moment the custom domain failed to attach, leaving
+nothing reachable. `workers_dev: true` is now pinned in the config for exactly that reason.
+
+Smoke tested against the apex after the switch: 26 passed, 0 failed, 1 skipped, and the database
+was left at 0 users, 0 memories, 0 sessions and 0 share links.
+
+Fallback URL, still live: `https://triptrace-ai-next.liukai19911010.workers.dev`.
 
 ### Smoke test result
 
@@ -645,7 +672,7 @@ TripTrace-related resources and their disposition:
 | R2 `triptrace-atlas-media` | new media bucket, 0 objects | keep |
 | D1 `triptrace` (`af462150-…`) | 5 users, 8 memories | obsolete, backed up |
 | R2 `triptrace-media` | 2 objects, 9,776,636 bytes | obsolete, backed up |
-| Pages project `triptrace-ai` | last deployed 2026-06-16, holds the apex domain | **not obsolete** |
+| Pages project `triptrace-ai` | last deployed 2026-06-16, no longer holds the apex | obsolete once the apex is confirmed |
 
 What the legacy database actually contains, which matters for deciding whether deleting it costs
 anything: seven of the eight memories belong to the owner's own account, the eighth is an
@@ -657,7 +684,14 @@ Both legacy resources were exported before any deletion, outside the repository,
 `~/triptrace-legacy-backup-2026-09-15/`: a 74-statement SQL dump of the database, and both R2
 objects verified byte-exact against the remote total of 9,776,636 bytes.
 
-The Pages project is deliberately excluded from cleanup. It carries the custom domain
-`triptrace.ai`, which currently serves the retired Chinese-language site titled
-"TripTrace.ai | AI 记录人生旅迹". Removing it or repointing the domain is a go-live decision about
-where the apex should send visitors, not a housekeeping step, and it is unresolved.
+The apex was moved to the Worker on 2026-09-15, so the Pages project no longer serves
+`triptrace.ai`. It is still deployed at `triptrace-ai.pages.dev` and still reads the legacy
+database, which is why the legacy database has not been deleted yet: doing so first would break a
+site that is still up. The remaining order is to confirm the apex behaves, then delete the legacy
+database and bucket, then remove or rotate the OpenAI key held by the Pages project, then retire
+the project itself.
+
+The four Chinese traces that were publicly readable at `triptrace.ai/api/memories` are no longer
+reachable from the apex. The legacy schema defaulted `is_public` to 1, so that exposure was the
+old product's design rather than a defect, but one of those traces belonged to a third party and
+it is no longer served from the domain.
