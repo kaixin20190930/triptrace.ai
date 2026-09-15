@@ -104,7 +104,7 @@ async function seedCleanupQueue(mediaKey, userId) {
   return new Promise((resolve) => {
     execFile(
       "npx",
-      ["wrangler", "d1", "execute", "triptrace", "--local", "--command", sql],
+      ["wrangler", "d1", "execute", "DB", "--local", "--command", sql],
       { cwd: process.cwd() },
       (error) => resolve(!error),
     );

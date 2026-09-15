@@ -1,33 +1,38 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
-  "name": "triptrace-ai-next",
-  "compatibility_date": "2026-05-21",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  },
-  "services": [
-    {
-      "binding": "WORKER_SELF_REFERENCE",
-      "service": "triptrace-ai-next"
-    }
-  ],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "triptrace",
-      "database_id": "af462150-c240-4e1b-9552-a9245d501155"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "MEDIA",
-      "bucket_name": "triptrace-media"
-    }
-  ],
-  "vars": {
-    "APP_NAME": "TripTrace.ai"
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": ".open-next/worker.js",
+	"name": "triptrace-ai-next",
+	"compatibility_date": "2026-05-21",
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "triptrace-ai-next"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "triptrace-atlas",
+			"database_id": "0d56a659-0aa9-4eb2-adca-8a150c212ee0"
+		}
+	],
+	// The application resolves storage by binding name, so `MEDIA` must be the new bucket.
+	// A second binding pointing at the new bucket would be ignored by every code path.
+	"r2_buckets": [
+		{
+			"binding": "MEDIA",
+			"bucket_name": "triptrace-atlas-media"
+		}
+	],
+	"vars": {
+		"APP_NAME": "TripTrace.ai"
+	}
 }

@@ -147,7 +147,7 @@ async function main() {
   });
 
   log("Applying local D1 migrations");
-  const migrated = await run("npx", ["wrangler", "d1", "migrations", "apply", "triptrace", "--local"]);
+  const migrated = await run("npx", ["wrangler", "d1", "migrations", "apply", "DB", "--local"]);
   if (migrated !== 0) {
     console.error("Local migrations failed.");
     process.exit(1);
@@ -189,7 +189,7 @@ async function main() {
   const sharingResult = await run("node", ["scripts/api-sharing-tests.mjs", baseUrl], { env: childEnv });
 
   log("Removing test data");
-  await run("npx", ["wrangler", "d1", "execute", "triptrace", "--local", "--file=scripts/qa-cleanup.sql"], {
+  await run("npx", ["wrangler", "d1", "execute", "DB", "--local", "--file=scripts/qa-cleanup.sql"], {
     stdio: "ignore",
   });
 

@@ -112,16 +112,39 @@ Edit `wrangler.jsonc`:
 ]
 ```
 
-Keep the binding names `DB` and `MEDIA`; the application resolves both by binding name.
+Two things matter more than they look:
 
-Then prove the change took effect before going further:
+- **Replace the existing entries, do not add new ones.** The application resolves storage by
+  binding name. A second R2 entry pointing at the new bucket under a different binding is
+  ignored by every code path, and `MEDIA` would quietly keep writing to the legacy bucket.
+- **Do not add `"remote": true`.** On a binding that flag means *local development uses the
+  real remote resource*. With it set, `npm run dev` and the whole test suite would read and
+  write production, and the suites create and delete accounts.
+
+Then prove the change took effect. Run all four checks and read every line of output:
 
 ```bash
-grep -A3 d1_databases wrangler.jsonc
+# 1. No legacy D1 id anywhere.
+grep -c "af462150-c240-4e1b-9552-a9245d501155" wrangler.jsonc
+
+# 2. No legacy bucket name anywhere.
+grep -c '"triptrace-media"' wrangler.jsonc
+
+# 3. No remote-binding flags.
+grep -c '"remote"' wrangler.jsonc
+
+# 4. Exactly one D1 and one R2 binding, pointing where you expect.
+node -e "const c=require('fs').readFileSync('wrangler.jsonc','utf8').replace(/^\s*\/\/.*$/gm,'');const j=JSON.parse(c);console.log(j.d1_databases);console.log(j.r2_buckets)"
 ```
 
-The legacy id `af462150-c240-4e1b-9552-a9245d501155` must no longer appear anywhere in the
-file. This is the single most important check in this runbook.
+The first three must all print `0`. The fourth must show one D1 binding named `DB` on
+`triptrace-atlas` and one R2 binding named `MEDIA` on `triptrace-atlas-media`, and nothing
+else. This is the most important check in this runbook.
+
+Changing `database_id` also makes Wrangler create a fresh **local** database, and changing the
+bucket name a fresh local bucket. Your previous local development data stays on disk under the
+old identifiers but is no longer used. That is harmless, and arguably a clean slate, but it
+does mean the local Atlas will look empty the first time you run `npm run dev` afterwards.
 
 ## 5. Apply Migrations To The New Database
 

@@ -13,7 +13,7 @@ Rule:
 1. Run `npm run lint`.
 2. Run `npx tsc --noEmit`.
 3. Run `npm run build`.
-3a. Apply pending migrations to local D1 with `npx wrangler d1 migrations apply triptrace --local`, then confirm the `d1_migrations` ledger lists every file in `migrations/`.
+3a. Apply pending migrations to local D1 with `npx wrangler d1 migrations apply DB --local`, then confirm the `d1_migrations` ledger lists every file in `migrations/`.
 3b. Run `npm run test:unit`; it needs no server, no Stripe account, and must report all checks passing.
 3c. With `npm run dev` running, run `npm run test:api -- http://127.0.0.1:3000` and confirm every check passes. Add `--with-ai` only when you intend to spend a real AI generation. Set `ADMIN_TASK_TOKEN` in the environment to include the analytics retention check.
 3c-2. Run `STRIPE_WEBHOOK_SECRET=<local secret> ADMIN_TASK_TOKEN=<local token> npm run test:billing -- http://127.0.0.1:3000` and confirm every check passes.

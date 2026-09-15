@@ -118,7 +118,7 @@ function d1(sql) {
   return new Promise((resolve) => {
     execFile(
       "npx",
-      ["wrangler", "d1", "execute", "triptrace", "--local", "--command", sql, "--json"],
+      ["wrangler", "d1", "execute", "DB", "--local", "--command", sql, "--json"],
       { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
       (error, stdout) => {
         if (error) return resolve(null);
