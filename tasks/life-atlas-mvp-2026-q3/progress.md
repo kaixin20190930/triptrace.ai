@@ -561,6 +561,40 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 
 ## Deployment Evidence
 
-No deployment has been made from the rebuilt repository.
+A first deployment of the rebuilt repository now exists, and it is **misconfigured**. It must not
+be treated as a release. Verified read-only on 2026-09-15.
 
-The old production deployment is intentionally not an acceptance target for the rebuild.
+Provisioning that is confirmed correct:
+
+- D1 `triptrace-atlas` (`0d56a659-0aa9-4eb2-adca-8a150c212ee0`): 15 tables, all 13 required tables
+  present, `d1_migrations` lists `0001`–`0012` with nothing outstanding, and every table is empty
+  (0 users, 0 memories, 0 sessions, 0 subscriptions, 0 share links, 0 analytics events).
+- Legacy D1 `triptrace` (`af462150-…`) is untouched: still 9 tables on the old schema, still
+  5 users and 8 memories, none of the new tables were added to it.
+- R2 buckets `triptrace-atlas-media` and the legacy `triptrace-media` both exist.
+
+What is wrong with the live Worker `triptrace-ai-next`, version
+`f21d2e39-a6e7-43e1-b82a-2889af5346bd`, uploaded 2026-09-15T07:11:36Z and serving 100% of traffic
+at `https://triptrace-ai-next.liukai19911010.workers.dev`:
+
+- `env.DB` resolves to the **legacy** database `af462150-…` and `env.MEDIA` to the **legacy**
+  bucket `triptrace-media`. The new resources are attached under the bindings `triptrace_atlas`
+  and `triptrace_atlas_media`, which no code path reads, because the application resolves storage
+  by binding name. The deployment predates the `wrangler.jsonc` correction in `40e051f`.
+- The Worker has **no secrets at all**. `wrangler secret list` returns `[]`, and only one version
+  has ever existed, which rules out secrets having been added and left unreleased. The values are
+  present in `.dev.vars`, which only affects local development. Live confirmation:
+  `GET /api/generate-memory` reports `"configured": false`.
+- As a direct consequence of the wrong binding, the live app reads the old schema and fails.
+  `/api/memories` returns 500 `memories_list_failed` and `/api/entitlements` returns 500
+  `entitlements_read_failed` where both should return 401 when unauthenticated.
+- Static pages render: `/`, `/plan`, `/vault`, `/timeline`, `/map`, `/explore`, `/privacy` and
+  `/terms` all return 200. The failure is confined to data-backed routes.
+
+The URL is publicly reachable. Sign-up is currently broken by the same schema mismatch, which
+incidentally prevented writes into the database holding the 5 real legacy users, but the exposure
+should be closed by redeploying against the corrected configuration rather than left to chance.
+
+Required before this can be called a release: redeploy from `40e051f` or later so that `DB` and
+`MEDIA` resolve to the new resources, set `OPENAI_API_KEY` and `ADMIN_TASK_TOKEN` as Worker
+secrets, then re-run the section 8 smoke checks in `docs/production-provisioning-runbook.md`.
