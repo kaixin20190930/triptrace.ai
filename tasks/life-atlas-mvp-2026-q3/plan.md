@@ -84,10 +84,10 @@ Every new user-facing feature must update `docs/manual-testing-guide.md`.
 
 | ID | Status | Task | Acceptance criteria |
 |---|---|---|---|
-| M3-001 | NOT_STARTED | Search personal traces | Search supports keyword, place, person, and year |
-| M3-002 | NOT_STARTED | Add Atlas filters | Year, place, person, and trace type filters work together |
+| M3-001 | IN_PROGRESS | Search personal traces | Search now covers title, story, tags, place, people, and the factual note, and a four-digit query is treated as a year; 50 unit checks pass. Browser QA in section 9.7 is outstanding |
+| M3-002 | IN_PROGRESS | Add Atlas filters | Year, place, person, and content filters combine with AND, with counted facet options that do not trap the user. Note: "trace type" currently means what a trace contains, because the schema has no event-type taxonomy yet |
 | M3-003 | IN_PROGRESS | Add memory resurfacing | Pure selection over saved traces with six widening rules, a stated reason per card, and no generation or writes of any kind; 35 unit checks pass. Browser QA in section 9.6 is outstanding |
-| M3-004 | NOT_STARTED | Add revisit email | Users can opt in and unsubscribe; links open the correct trace |
+| M3-004 | BLOCKED | Add revisit email | Deferred by the owner on 2026-09-02: sending email needs a paid provider and a verified domain, and there is no budget for it. In-app resurfacing (`M3-003`) is the only re-engagement channel until this is revisited |
 | M3-005 | IN_PROGRESS | Add selected-trace sharing | Per-trace links with hashed tokens, an allowlisted public payload, blurred coordinates, and position-addressed photos; 89 automated checks pass. Browser QA in section 9.5 is outstanding |
 | M3-006 | IN_PROGRESS | Add share-link revocation | Revocation is immediate for both story and photos, is auditable, and happens automatically on trace or account deletion; covered by the same checks. Browser QA outstanding |
 | M3-007 | IN_PROGRESS | Add digital export | Complete JSON export and a ZIP archive containing the photos are implemented and covered by 50 checks; the per-trace poster is the existing media-ready format. Browser QA in section 9.4.1 is outstanding |

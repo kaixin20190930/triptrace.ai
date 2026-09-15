@@ -9,6 +9,14 @@ import { useMemories, type Memory } from "@/lib/use-memories";
 import { useSelectedTrace } from "@/lib/use-selected-trace";
 import { MemoryDetail } from "@/components/memory/memory-detail";
 import { ResurfacedRail } from "@/components/memory/resurfaced-rail";
+import { TraceFilterBar } from "@/components/memory/trace-filter-bar";
+import {
+  EMPTY_FILTERS,
+  buildFacets,
+  describeFilters,
+  filterTraces,
+  type TraceFilterState,
+} from "@/lib/trace-filters";
 import { TracePreviewCard } from "@/components/memory/trace-preview-card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -146,9 +154,17 @@ function SkeletonCard() {
 export default function VaultPage() {
   const { memories, loading } = useMemories();
   const openedTrackedRef = React.useRef(false);
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<VaultFilter>("all");
+  const [filters, setFilters] = useState<TraceFilterState>(EMPTY_FILTERS);
   const [detailOpen, setDetailOpen] = useState(false);
+  const searchTrackedRef = React.useRef("");
+
+  // Derived so the rest of the component keeps reading `query` and `filter` as before.
+  const query = filters.query;
+  const filter = filters.content;
+
+  const patchFilters = React.useCallback((patch: Partial<TraceFilterState>) => {
+    setFilters((current) => ({ ...current, ...patch }));
+  }, []);
   const { selected, selectTrace } = useSelectedTrace(memories);
 
   React.useEffect(() => {
@@ -157,20 +173,13 @@ export default function VaultPage() {
     trackEvent("vault_opened", { traceCount: memories.length });
   }, [loading, memories.length]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return memories.filter((m) => {
-      if (filter === "photos" && m.photoUrls.length === 0) return false;
-      if (filter === "places" && !m.place) return false;
-      if (!q) return true;
-      return (
-        m.title.toLowerCase().includes(q) ||
-        m.story.toLowerCase().includes(q) ||
-        m.tags.some((t) => t.toLowerCase().includes(q)) ||
-        (m.place ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [memories, query, filter]);
+  // Search and filtering live in `src/lib/trace-filters.ts` so every rule is unit tested.
+  const filtered = useMemo(() => filterTraces(memories, filters), [memories, filters]);
+  const facets = useMemo(() => buildFacets(memories, filters), [memories, filters]);
+  const filterSummary = useMemo(
+    () => describeFilters(filters, filtered.length, memories.length),
+    [filters, filtered.length, memories.length],
+  );
 
   const stats = useMemo(
     () => ({
@@ -209,9 +218,19 @@ export default function VaultPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               className="pl-9"
-              placeholder="Search titles, tags, and places..."
+              placeholder="Search stories, tags, places, people, or a year..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search your traces"
+              onChange={(e) => {
+                const next = e.target.value;
+                patchFilters({ query: next });
+                // One event per distinct non-empty search, so a metric is not sent per keystroke.
+                const trimmed = next.trim();
+                if (trimmed.length >= 2 && searchTrackedRef.current !== trimmed) {
+                  searchTrackedRef.current = trimmed;
+                  trackEvent("personal_search_used", { source: "vault", lengthBucket: trimmed.length < 12 ? "short" : "long" });
+                }
+              }}
             />
           </div>
           <div className="flex rounded-full border border-border bg-card p-1">
@@ -222,7 +241,7 @@ export default function VaultPage() {
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setFilter(option.value)}
+                  onClick={() => patchFilters({ content: option.value })}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
                     active ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
                   }`}
@@ -233,6 +252,19 @@ export default function VaultPage() {
               );
             })}
           </div>
+        </div>
+        <div className="mt-4">
+          <TraceFilterBar
+            filters={filters}
+            facets={facets}
+            summary={filterSummary}
+            onChange={(patch) => {
+              patchFilters(patch);
+              const dimension = Object.keys(patch)[0];
+              if (dimension) trackEvent("personal_filter_used", { source: "vault", dimension });
+            }}
+            onClear={() => setFilters(EMPTY_FILTERS)}
+          />
         </div>
       </section>
 

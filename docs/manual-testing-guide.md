@@ -351,6 +351,33 @@ must actually delete.
 Share links are covered in section 9.5, including their removal on trace and account
 deletion, which completes the share-link half of `M3-008`.
 
+## 9.7 Search And Filters
+
+1. Open `/vault` and confirm the search box mentions stories, tags, places, people, and a year.
+2. Search for a word in a title, then in a story body, then in a tag, and confirm each matches.
+3. Search for a person you named on a trace and confirm it matches. This did not work before.
+4. Search for text that only appears in a factual note and confirm it matches.
+5. Type a four-digit year and confirm only traces whose confirmed date falls in that year match.
+6. Confirm a year search never matches a trace whose date was never confirmed.
+7. Confirm search ignores case and surrounding spaces.
+8. Confirm the `Year`, `Place`, and `Person` dropdowns list only values that exist in your Atlas, each with a count.
+9. Confirm years are listed newest first and that `Date not set` appears last, not first.
+10. Choose a year and confirm the other years are still selectable. A chosen filter must never collapse its own list and trap you.
+11. Choose a year and confirm the place and person counts narrow to match.
+12. Combine a year, a place, and a person and confirm the result satisfies all three at once.
+13. Combine filters that cannot both be true and confirm the result is empty rather than one filter being quietly ignored.
+14. Select `Date not set` and confirm only undated traces appear, with a line explaining that they are not filed under any year.
+15. Confirm the status line describes what is applied and the number of matches, and that it is announced by a screen reader.
+16. Click `Clear filters` and confirm every dimension resets, including the search box.
+17. Confirm the filters work with the keyboard alone and that each dropdown has a visible label.
+18. Confirm the resurfacing rail from section 9.6 disappears while a search or filter is active.
+19. Confirm one `personal_search_used` event is sent per distinct search rather than per keystroke, and that it carries only a coarse length bucket, never the query text.
+20. Confirm changing a dropdown sends one `personal_filter_used` event naming only the dimension.
+
+Automated coverage: `npm run test:unit` asserts every search field, the year handling
+including the refusal to file an undated trace under a year, all filter combinations, facet
+counts and ordering, the non-trapping behaviour, and that filtering never mutates its input.
+
 ## 9.6 Memory Resurfacing
 
 Resurfacing shows traces the user already saved. It must never create content: no AI call,

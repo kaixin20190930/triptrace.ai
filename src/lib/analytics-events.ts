@@ -19,6 +19,8 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS = {
   trace_opened: ["source"],
   memory_resurfaced: ["source", "count", "reason"],
   old_trace_revisited: ["source", "reason", "yearsAgo"],
+  personal_search_used: ["source", "lengthBucket"],
+  personal_filter_used: ["source", "dimension"],
   trace_story_edited: ["source"],
   trace_facts_edited: ["source", "fieldsCount"],
   trace_deleted: ["source", "hadMedia"],

@@ -70,7 +70,7 @@ Remaining engineering work:
 | Fact confirmation | IN_PROGRESS | Required before create and fact PATCH; date, coordinates, place, people, and factual note are editable |
 | Anonymous draft preservation | IN_PROGRESS | IndexedDB draft restore and sign-up-to-save path exist; needs broader manual QA |
 | Private save and R2 media | IN_PROGRESS | Default private save, signed-in upload, owner-only media reads, and deletion cleanup exist; needs automated API coverage |
-| Vault | IN_PROGRESS | Search, filters, photo shelf, cards, detail open, and a resurfacing rail exist; year/person filters are incomplete |
+| Vault | DONE (pending browser QA) | Search across title, story, tags, place, people, factual note, and year; combinable year, place, person, and content filters with counted facets; photo shelf, cards, detail open, and a resurfacing rail |
 | Timeline | IN_PROGRESS | Event-date grouping, detail open, selected preview, and `?trace=` deep-link selection exist |
 | Map | DONE (pending browser QA) | Real 2D coordinate map with pan, zoom, marker grouping, chronological connector, keyboard access, and `?trace=` sync, rendered from a first-party outline with no third-party requests; place route retained for unlocated traces |
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
@@ -451,6 +451,32 @@ Verification:
 - `npm run test:unit` is now 218 checks across seven suites. `npm run test:e2e` stays at 178 across four HTTP suites with no regression.
 - `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
 
+Search and faceted filtering completed (`M3-001`, `M3-002`):
+
+- Added `src/lib/trace-filters.ts`. Search now covers title, story, tags, place, people, and the factual note, and a four-digit query is treated as a year. The previous search missed people, the factual note, and years entirely, which meant the two things a person is most likely to search a life archive by were unreachable.
+- Added year, place, and person filters that combine with the existing content filter using AND, with counted options in `src/components/memory/trace-filter-bar.tsx`.
+- Added `personal_search_used`, which the roadmap's event dictionary already named, plus `personal_filter_used`. Search is reported once per distinct query rather than per keystroke, and carries only a coarse length bucket, never the query text.
+
+Three decisions:
+
+- A facet's counts are computed with every other filter applied but not its own. Counting with its own filter applied would collapse each list to the single chosen value and trap the user, unable to switch year without first clearing it.
+- A trace whose date was never confirmed has no year, and is not filed under the year it was typed in. It is reachable through an explicit `Date not set` option instead of being quietly misfiled. This is the same fact rule already applied in clustering and resurfacing.
+- Native selects were used rather than a custom menu: keyboard and screen-reader support come for free, mobile works without extra handling, and a filter control is not where a bespoke widget earns its cost.
+
+Honest scope note: `M3-002` names a "trace type" filter. The schema has no event-type taxonomy, only what a trace contains, so the existing photos/places filter stands in for it. Introducing an event-type column was out of scope for this increment and is recorded rather than silently treated as done.
+
+Verification:
+
+- Added `scripts/trace-filters-unit-tests.mts`: 50 of 50 checks, covering every search field, case and whitespace handling, year queries, each single dimension, exact rather than prefix place matching, all four dimensions combined, a contradictory combination returning empty rather than dropping a filter, facet ordering and counts, the non-trapping property in both directions, the summary line, and that filtering never mutates its input.
+- One failure during development was my test fixture being wrong rather than the code: every fixture happened to have a place, so the places filter correctly returned all of them. The expectation was corrected and two focused cases were added, including one trace with no place and one whose place is only whitespace.
+- `npm run test:unit` is now 268 checks across eight suites. `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
+
+Revisit email deferred (`M3-004`):
+
+The owner decided on 2026-09-02 not to proceed, because sending email requires a paid provider and a verified sending domain and there is no budget for it. Recorded as `BLOCKED` in `plan.md` rather than left as not started, since it is a resource decision and not an oversight.
+
+The product consequence is worth stating plainly: without email there is no way to reach a user who does not come back on their own. In-app resurfacing is the entire re-engagement channel, which makes the Phase 3 retention gates harder to reach than the roadmap assumed when it counted on a revisit email. That should be taken into account before reading any retention number as a verdict on the product itself.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -493,6 +519,8 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-02 | Shared photos are addressed by index, never by storage key | A storage key embeds the owner's account id, and an index leaves a recipient nothing to probe with |
 | 2026-09-02 | Resurfacing never claims an anniversary without a confirmed event date | Dating a memory by when it was typed would be a factual claim the data does not support |
 | 2026-09-02 | Resurfacing is stable for a given day | A memory that appears and vanishes on refresh reads as a bug, not as serendipity |
+| 2026-09-02 | Facet counts exclude their own filter | Otherwise choosing a year collapses the year list and traps the user |
+| 2026-09-02 | Revisit email deferred indefinitely | No budget for a sending provider; in-app resurfacing becomes the only re-engagement channel, which lowers reachable retention |
 
 ## Blockers
 
