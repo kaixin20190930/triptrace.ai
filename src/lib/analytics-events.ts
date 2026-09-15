@@ -17,6 +17,8 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS = {
   signup_completed: ["source"],
   first_atlas_saved: ["photoCount", "hasText", "hasDate", "hasCoordinates"],
   trace_opened: ["source"],
+  memory_resurfaced: ["source", "count", "reason"],
+  old_trace_revisited: ["source", "reason", "yearsAgo"],
   trace_story_edited: ["source"],
   trace_facts_edited: ["source", "fieldsCount"],
   trace_deleted: ["source", "hadMedia"],

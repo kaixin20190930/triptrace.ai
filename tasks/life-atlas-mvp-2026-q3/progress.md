@@ -70,7 +70,7 @@ Remaining engineering work:
 | Fact confirmation | IN_PROGRESS | Required before create and fact PATCH; date, coordinates, place, people, and factual note are editable |
 | Anonymous draft preservation | IN_PROGRESS | IndexedDB draft restore and sign-up-to-save path exist; needs broader manual QA |
 | Private save and R2 media | IN_PROGRESS | Default private save, signed-in upload, owner-only media reads, and deletion cleanup exist; needs automated API coverage |
-| Vault | IN_PROGRESS | Search, filters, photo shelf, cards, and detail open exist; year/person filters are incomplete |
+| Vault | IN_PROGRESS | Search, filters, photo shelf, cards, detail open, and a resurfacing rail exist; year/person filters are incomplete |
 | Timeline | IN_PROGRESS | Event-date grouping, detail open, selected preview, and `?trace=` deep-link selection exist |
 | Map | DONE (pending browser QA) | Real 2D coordinate map with pan, zoom, marker grouping, chronological connector, keyboard access, and `?trace=` sync, rendered from a first-party outline with no third-party requests; place route retained for unlocated traces |
 | Trace detail | IN_PROGRESS | Facts/story separation, fact editor, narrative editor, copy, and poster download exist |
@@ -430,6 +430,27 @@ Verification:
 - `npm run test:unit` is now 183 checks across six suites. `npm run test:e2e` runs four HTTP suites totalling 178 checks.
 - `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
 
+Memory resurfacing implemented (`M3-003`):
+
+The acceptance criterion is that existing traces surface *without creating new content*, so this is pure selection over what the user already saved. It makes no model call, writes no row, and issues no request beyond the trace list the page already loads. That also means it costs nothing to run, which matters for a retention feature that should fire on every visit.
+
+- Added `src/lib/resurfacing.ts` with six rules tried from strongest to weakest: same day in a past year, same week in a past year, same month in a past year, a place whose newest trace is over six months old, something from the early days, and as a last resort the first trace ever saved.
+- Added `src/components/memory/resurfaced-rail.tsx` and placed it at the top of `/vault`, on the unfiltered view only, since resurfacing belongs to browsing rather than searching.
+- Added `memory_resurfaced` and `old_trace_revisited` to the analytics allowlist. The second is the event the roadmap's retention gate is written against, so it needed to exist before that gate can ever be evaluated.
+
+Two rules shaped the design:
+
+- An anniversary claim requires a confirmed event date. Saying "three years ago today" based on when someone typed the memory rather than when it happened would be a factual claim the data does not support. Traces with an unknown date still surface, just never by anniversary.
+- The result is stable for a given day. It changes as the date changes, not on every reload, because a memory that appears and vanishes on refresh reads as a bug rather than as serendipity.
+
+A real bug was caught by its own test. The first version measured "how long ago" as whole elapsed years, which is correct in general but wrong for a label anchored to a calendar position: an event on 20 September 2023 seen on 2 September 2026 has only two complete years behind it, so the label read "September, 2 years ago", which a reader takes to mean September 2024. It pointed at the wrong year. The anniversary rules now use the calendar-year difference, which is the right measure here, and the reasoning is recorded in the code so it is not "simplified" back later.
+
+Verification:
+
+- Added `scripts/resurfacing-unit-tests.mts`: 35 of 35 checks. Coverage includes each rule and its widening, the year-wrap so early January is near late December, the exclusion of today's own traces and future dates, the refusal to infer an anniversary from a creation date, correct year naming, judging a place by its newest trace so somewhere frequently revisited is not called neglected, the limit, no duplicates, stability across two times on the same day, variation across different days, independence from input order, and that the input traces are not modified.
+- `npm run test:unit` is now 218 checks across seven suites. `npm run test:e2e` stays at 178 across four HTTP suites with no regression.
+- `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -470,6 +491,8 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-02 | The shared payload is an allowlist, not the stored trace | It fails closed as the schema grows, instead of leaking each new field |
 | 2026-09-02 | Shared coordinates are blurred to about a kilometre | Sharing a memory must not mean sharing an address |
 | 2026-09-02 | Shared photos are addressed by index, never by storage key | A storage key embeds the owner's account id, and an index leaves a recipient nothing to probe with |
+| 2026-09-02 | Resurfacing never claims an anniversary without a confirmed event date | Dating a memory by when it was typed would be a factual claim the data does not support |
+| 2026-09-02 | Resurfacing is stable for a given day | A memory that appears and vanishes on refresh reads as a bug, not as serendipity |
 
 ## Blockers
 

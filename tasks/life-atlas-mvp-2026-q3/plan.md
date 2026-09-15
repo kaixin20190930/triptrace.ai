@@ -86,7 +86,7 @@ Every new user-facing feature must update `docs/manual-testing-guide.md`.
 |---|---|---|---|
 | M3-001 | NOT_STARTED | Search personal traces | Search supports keyword, place, person, and year |
 | M3-002 | NOT_STARTED | Add Atlas filters | Year, place, person, and trace type filters work together |
-| M3-003 | NOT_STARTED | Add memory resurfacing | Existing traces can be surfaced without creating new content |
+| M3-003 | IN_PROGRESS | Add memory resurfacing | Pure selection over saved traces with six widening rules, a stated reason per card, and no generation or writes of any kind; 35 unit checks pass. Browser QA in section 9.6 is outstanding |
 | M3-004 | NOT_STARTED | Add revisit email | Users can opt in and unsubscribe; links open the correct trace |
 | M3-005 | IN_PROGRESS | Add selected-trace sharing | Per-trace links with hashed tokens, an allowlisted public payload, blurred coordinates, and position-addressed photos; 89 automated checks pass. Browser QA in section 9.5 is outstanding |
 | M3-006 | IN_PROGRESS | Add share-link revocation | Revocation is immediate for both story and photos, is auditable, and happens automatically on trace or account deletion; covered by the same checks. Browser QA outstanding |

@@ -30,7 +30,7 @@ Rule:
 
 | Command | Needs a server | Needs secrets | What it covers |
 |---|---|---|---|
-| `npm run test:unit` | no | no | Map geometry, Stripe signatures and event mapping, media retry schedule, photo clustering, ZIP writer verified with the system `unzip` |
+| `npm run test:unit` | no | no | Map geometry, Stripe signatures and event mapping, media retry schedule, photo clustering, ZIP writer verified with the system `unzip`, share-link primitives, resurfacing rules |
 | `npm run test:api` | yes | optional | Privacy, ownership, deletion, entitlements, quotas, concurrency, media cleanup queue, retention endpoint |
 | `npm run test:billing` | yes | optional | Webhook signatures, idempotency, event ordering, plan transitions, billing analytics |
 | `npm run test:account` | yes | no | Export contents, real archive integrity, deletion guards, and what remains in the database afterwards |
@@ -350,6 +350,31 @@ must actually delete.
 
 Share links are covered in section 9.5, including their removal on trace and account
 deletion, which completes the share-link half of `M3-008`.
+
+## 9.6 Memory Resurfacing
+
+Resurfacing shows traces the user already saved. It must never create content: no AI call,
+no new row, no request beyond the trace list the page already loads.
+
+1. Open `/vault` with several saved traces and confirm a `Worth looking at again` section appears above the library.
+2. Confirm it states that nothing new was generated.
+3. Confirm each card gives a reason, such as `On this day, 3 years ago` or `From the early days of your Atlas`.
+4. Save a trace with a confirmed event date on today's month and day in a past year, then reload and confirm it appears as `On this day`.
+5. Confirm a trace whose date is unknown is never described with an anniversary. A date must never be inferred from when the trace was written.
+6. Confirm a trace dated today is not called an anniversary, and neither is one dated in the future.
+7. Check the year in an anniversary label against the trace's real date. `September, 3 years ago` seen in 2026 must mean September 2023.
+8. Reload the page several times and confirm the same traces are shown. Resurfacing must not reshuffle on every visit.
+9. Confirm no more than three traces are shown at once and none repeats.
+10. Click a card and confirm the correct trace opens in the detail view.
+11. Confirm the network panel shows no generation request and no new save when the rail appears or is clicked.
+12. Search or switch to a filter and confirm the rail disappears, since it belongs to browsing rather than searching.
+13. With a brand new account holding one recent trace, confirm the rail still shows something sensible rather than being empty or claiming a timespan.
+14. With no traces at all, confirm the rail does not appear.
+15. Confirm one `memory_resurfaced` event is sent when the rail appears, and one `old_trace_revisited` when a card is opened, carrying only the reason and a coarse year count.
+
+Automated coverage: `npm run test:unit` asserts every rule, including that no anniversary is
+claimed without a confirmed date, that the year in a label is correct, that the result is
+stable for a given day, and that the input traces are never modified.
 
 ## 9.5 Selected-Trace Sharing And Revocation
 

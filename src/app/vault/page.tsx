@@ -8,6 +8,7 @@ import { trackEvent } from "@/lib/analytics";
 import { useMemories, type Memory } from "@/lib/use-memories";
 import { useSelectedTrace } from "@/lib/use-selected-trace";
 import { MemoryDetail } from "@/components/memory/memory-detail";
+import { ResurfacedRail } from "@/components/memory/resurfaced-rail";
 import { TracePreviewCard } from "@/components/memory/trace-preview-card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -237,6 +238,17 @@ export default function VaultPage() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <section className="space-y-5">
+          {/* Only on the unfiltered view: resurfacing is for browsing, not for searching. */}
+          {!loading && !query && filter === "all" && (
+            <ResurfacedRail
+              traces={memories}
+              source="vault"
+              onOpen={(traceId) => {
+                selectTrace(traceId);
+                setDetailOpen(true);
+              }}
+            />
+          )}
           {!loading && !query && filter === "all" && (
             <FeaturedStrip
               memories={memories}
