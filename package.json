@@ -24,6 +24,7 @@
     "test:account": "node scripts/api-account-data-tests.mjs",
     "test:sharing": "node scripts/api-sharing-tests.mjs",
     "test:e2e": "node scripts/run-e2e-tests.mjs",
+    "test:smoke": "node scripts/deployment-smoke-tests.mjs",
     "test:all": "npm run lint && tsc --noEmit && npm run test:unit && npm run test:e2e",
     "build:world-land": "node scripts/build-world-land.mjs",
     "qa:cleanup": "wrangler d1 execute DB --local --file=scripts/qa-cleanup.sql"

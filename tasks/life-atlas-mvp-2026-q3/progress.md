@@ -580,9 +580,45 @@ The rebuilt repository is deployed and correctly wired as of version
 Deployment target: `https://triptrace-ai-next.liukai19911010.workers.dev`. The apex domain
 `triptrace.ai` does **not** point here; see the legacy inventory below.
 
-Still outstanding before this counts as a validated release: the section 8 smoke checks in
-`docs/production-provisioning-runbook.md`, and the real-photo narrative acceptance that only the
-project owner can perform.
+### Smoke test result
+
+Section 8 of the runbook is now automated as `npm run test:smoke`, and it was run against the
+deployment with `--with-ai`: **26 passed, 0 failed, 1 skipped, of 27 checks.**
+
+The script was validated against a local server first, which caught four wrong expectations in
+the script itself and one in the runbook before any of them could produce a misleading result
+against production.
+
+Confirmed against the live deployment, with real OpenAI credit spent on the guest draft:
+
+- The provider is configured and answers for real: a guest draft returned `source=openai`,
+  `model=gpt-5.2`, and the second guest attempt was refused with `entitlement_guest_demo_used`.
+- The session cookie carries `HttpOnly`, `SameSite=Lax` and, over HTTPS, `Secure`.
+- Free plan ceilings are enforced server-side: the fourth trace is refused with
+  `entitlement_trace_limit_reached`, and a 21-image upload with `entitlement_image_limit_exceeded`.
+- Media is owner-only. The owner reads 200, signed out is 403, a second account is 403, and after
+  the trace is deleted the media returns 404.
+- Share links work and revocation closes both the trace and its photos, 404 on each.
+- Export is complete, versioned, and served as an attachment; the archive is a real ZIP.
+- Account deletion requires the correct password, 403 on a wrong one, and sign-in afterwards is 401.
+- Private surfaces are `noindex`; `/` and `/explore` remain indexable; the map land asset is
+  first-party JSON.
+- Admin endpoints refuse anonymous callers on all three paths.
+
+Check 7, grouping an import of 40 photos, is skipped by design: clustering runs in the browser and
+has no server endpoint. It is covered at unit level by `npm run test:clustering` and still needs
+manual browser QA.
+
+Check 25 returns `503 billing_not_configured` rather than `400 stripe_missing_signature`, because
+Stripe does not exist yet. The route fails shut before reading the request body, so no unsigned
+event can be processed either way. The runbook expectation was corrected to accept both outcomes;
+this is not a defect.
+
+The deployment was left as it was found: 0 users, 0 memories, 0 sessions, 0 share links, 0 queued
+cleanups, 0 analytics events, and 0 objects in `triptrace-atlas-media`.
+
+Still outstanding before this counts as a validated release: the real-photo narrative acceptance
+that only the project owner can perform, and browser-level QA of photo grouping.
 
 ### Superseded record: the first, misconfigured deployment
 

@@ -245,16 +245,30 @@ Run against the deployed URL. Use a throwaway account and delete it at the end.
 | 22 | `/vault`, `/timeline`, `/map`, `/plan` | load, and are `noindex` |
 | 23 | `/world-land.json` | `200` from your own origin |
 | 24 | `/privacy`, `/terms` | load, linked in the footer |
-| 25 | `POST /api/billing/webhook` unsigned | `400 stripe_missing_signature` |
+| 25 | `POST /api/billing/webhook` unsigned | `400 stripe_missing_signature`, or `503 billing_not_configured` before Stripe exists |
 | 26 | Admin endpoints without token | `403`, or `503` if unset |
 | 27 | `/`, `/explore` | indexable |
 
-The automated suite can also be pointed at the deployment, but it creates real accounts and
-traces there, so only do this on a release candidate you are willing to clean up:
+All of the above except check 7 is automated. Check 7 is photo grouping, which runs in the
+browser and has no server endpoint, so it stays a manual step covered at unit level by
+`npm run test:clustering`.
 
 ```bash
-ADMIN_TASK_TOKEN=<production token> npm run test:api -- https://<deployment-url>
+npm run test:smoke -- https://<deployment-url> --with-ai
 ```
+
+`--with-ai` spends real credit on checks 3 and 4, a fraction of a cent for a text draft, and it
+is the only way to prove the production key works rather than merely that it is present.
+
+The script creates two throwaway accounts, exercises the limits against the real database, and
+deletes both at the end. Confirm the database is back where it started afterwards:
+
+```bash
+npx wrangler d1 execute DB --remote --command "SELECT (SELECT COUNT(*) FROM users) u,(SELECT COUNT(*) FROM memories) m;"
+```
+
+The broader suites can also be pointed at a deployment, but they were written for a local server
+and leave more behind, so prefer the smoke script for anything you have to clean up by hand.
 
 ## 9. Stripe
 
