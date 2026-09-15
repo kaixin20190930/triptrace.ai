@@ -561,40 +561,67 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 
 ## Deployment Evidence
 
-A first deployment of the rebuilt repository now exists, and it is **misconfigured**. It must not
-be treated as a release. Verified read-only on 2026-09-15.
+The rebuilt repository is deployed and correctly wired as of version
+`f7a4503e-be9e-424e-a322-b7ec689a8e1e` on 2026-09-15. Verified read-only:
 
-Provisioning that is confirmed correct:
+- `env.DB` resolves to `triptrace-atlas` (`0d56a659-…`) and `env.MEDIA` to `triptrace-atlas-media`.
+  The extra legacy bindings are gone.
+- `OPENAI_API_KEY` and `ADMIN_TASK_TOKEN` both exist as `secret_text`. Live confirmation:
+  `GET /api/generate-memory` reports `"provider":"OpenAI","configured":true`.
+- The two endpoints that previously returned 500 now answer correctly: `/api/memories` returns
+  `{"ok":true,"memories":[]}` and `/api/entitlements` returns the guest plan. Both are 200 by
+  design; an earlier note in this file predicted 401, which was wrong, because these endpoints
+  answer unauthenticated callers with a guest-scoped payload rather than refusing them.
+- `triptrace-atlas` is still empty after the deployment, so nothing was written by deploying.
+- The two build warnings are benign. The duplicate `options` key is inside `@floating-ui` as
+  bundled by `@base-ui/react`, not our source. The configuration drift warning was the fix
+  landing: it reported the remote dashboard config being overridden by the corrected local one.
 
-- D1 `triptrace-atlas` (`0d56a659-0aa9-4eb2-adca-8a150c212ee0`): 15 tables, all 13 required tables
-  present, `d1_migrations` lists `0001`–`0012` with nothing outstanding, and every table is empty
-  (0 users, 0 memories, 0 sessions, 0 subscriptions, 0 share links, 0 analytics events).
-- Legacy D1 `triptrace` (`af462150-…`) is untouched: still 9 tables on the old schema, still
-  5 users and 8 memories, none of the new tables were added to it.
-- R2 buckets `triptrace-atlas-media` and the legacy `triptrace-media` both exist.
+Deployment target: `https://triptrace-ai-next.liukai19911010.workers.dev`. The apex domain
+`triptrace.ai` does **not** point here; see the legacy inventory below.
 
-What is wrong with the live Worker `triptrace-ai-next`, version
-`f21d2e39-a6e7-43e1-b82a-2889af5346bd`, uploaded 2026-09-15T07:11:36Z and serving 100% of traffic
-at `https://triptrace-ai-next.liukai19911010.workers.dev`:
+Still outstanding before this counts as a validated release: the section 8 smoke checks in
+`docs/production-provisioning-runbook.md`, and the real-photo narrative acceptance that only the
+project owner can perform.
 
-- `env.DB` resolves to the **legacy** database `af462150-…` and `env.MEDIA` to the **legacy**
-  bucket `triptrace-media`. The new resources are attached under the bindings `triptrace_atlas`
-  and `triptrace_atlas_media`, which no code path reads, because the application resolves storage
-  by binding name. The deployment predates the `wrangler.jsonc` correction in `40e051f`.
-- The Worker has **no secrets at all**. `wrangler secret list` returns `[]`, and only one version
-  has ever existed, which rules out secrets having been added and left unreleased. The values are
-  present in `.dev.vars`, which only affects local development. Live confirmation:
-  `GET /api/generate-memory` reports `"configured": false`.
-- As a direct consequence of the wrong binding, the live app reads the old schema and fails.
-  `/api/memories` returns 500 `memories_list_failed` and `/api/entitlements` returns 500
-  `entitlements_read_failed` where both should return 401 when unauthenticated.
-- Static pages render: `/`, `/plan`, `/vault`, `/timeline`, `/map`, `/explore`, `/privacy` and
-  `/terms` all return 200. The failure is confined to data-backed routes.
+### Superseded record: the first, misconfigured deployment
 
-The URL is publicly reachable. Sign-up is currently broken by the same schema mismatch, which
-incidentally prevented writes into the database holding the 5 real legacy users, but the exposure
-should be closed by redeploying against the corrected configuration rather than left to chance.
+Version `f21d2e39-a6e7-43e1-b82a-2889af5346bd`, uploaded 2026-09-15T07:11:36Z, was bound to the
+legacy database and bucket and had no secrets. Retained here because it was briefly public.
 
-Required before this can be called a release: redeploy from `40e051f` or later so that `DB` and
-`MEDIA` resolve to the new resources, set `OPENAI_API_KEY` and `ADMIN_TASK_TOKEN` as Worker
-secrets, then re-run the section 8 smoke checks in `docs/production-provisioning-runbook.md`.
+It resolved `env.DB` to `af462150-…` and `env.MEDIA` to `triptrace-media`, with the new resources
+attached under the unread bindings `triptrace_atlas` and `triptrace_atlas_media`, because the
+deployment predated the `wrangler.jsonc` correction in `40e051f`. `/api/memories` and
+`/api/entitlements` returned 500 against the old schema. No writes reached the legacy database.
+
+## Legacy Cloudflare Inventory
+
+Audited read-only on 2026-09-15. The Cloudflare account hosts several unrelated products
+(`flux-ai*`, `sigoo*`, `pairvu`, `threadline-intake`, `video-worker*`, `mcp*`, `solana-alpha`,
+`rulevio`, `visualqa`). None of them are in scope for any TripTrace cleanup.
+
+TripTrace-related resources and their disposition:
+
+| Resource | Contents | Disposition |
+| --- | --- | --- |
+| Worker `triptrace-ai-next` | current product, version `f7a4503e` | keep |
+| D1 `triptrace-atlas` | new production database, empty | keep |
+| R2 `triptrace-atlas-media` | new media bucket, 0 objects | keep |
+| D1 `triptrace` (`af462150-…`) | 5 users, 8 memories | obsolete, backed up |
+| R2 `triptrace-media` | 2 objects, 9,776,636 bytes | obsolete, backed up |
+| Pages project `triptrace-ai` | last deployed 2026-06-16, holds the apex domain | **not obsolete** |
+
+What the legacy database actually contains, which matters for deciding whether deleting it costs
+anything: seven of the eight memories belong to the owner's own account, the eighth is an
+eight-character test string, and the remaining three accounts hold zero content. No third party
+ever created a trace. Two of those accounts are third-party addresses holding only an email and a
+password hash, so discarding the database removes personal data rather than losing anything.
+
+Both legacy resources were exported before any deletion, outside the repository, to
+`~/triptrace-legacy-backup-2026-09-15/`: a 74-statement SQL dump of the database, and both R2
+objects verified byte-exact against the remote total of 9,776,636 bytes.
+
+The Pages project is deliberately excluded from cleanup. It carries the custom domain
+`triptrace.ai`, which currently serves the retired Chinese-language site titled
+"TripTrace.ai | AI 记录人生旅迹". Removing it or repointing the domain is a go-live decision about
+where the apex should send visitors, not a housekeeping step, and it is unresolved.
