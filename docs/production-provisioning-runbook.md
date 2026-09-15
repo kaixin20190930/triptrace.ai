@@ -1,93 +1,129 @@
 # Production Provisioning Runbook
 
-Last updated: 2026-09-01 Asia/Shanghai
+Last updated: 2026-09-15 Asia/Shanghai
 
-Scope: `RB-301` and `PA-901`. This is the checklist for standing up fresh Cloudflare
-resources for the rebuilt TripTrace.ai and recording the evidence.
+Scope: `RB-301`, `PA-901`, the Stripe account, and the legal review. These are the tasks an
+agent must not perform unprompted, because they create real resources, spend real money, or
+require professional judgement.
 
-Nothing in this file has been executed. Every command below creates or modifies real
-cloud resources and is left for the project owner to run deliberately.
+Nothing in this file has been executed. Every command that changes something is left for the
+project owner to run deliberately.
 
-## 1. Read This First
+## 0. Verified Current State
 
-`wrangler.jsonc` currently points at the **legacy production resources**:
+Checked with read-only commands on 2026-09-15:
 
-```jsonc
-"d1_databases": [{ "binding": "DB", "database_name": "triptrace", "database_id": "af462150-…" }]
-"r2_buckets":   [{ "binding": "MEDIA", "bucket_name": "triptrace-media" }]
+| Fact | Value |
+|---|---|
+| Cloudflare account | `liukai19911010@gmail.com`, id `23e53b75ddd6ee2d8b80031f6a1e45e0` |
+| Legacy D1 | `triptrace`, id `af462150-c240-4e1b-9552-a9245d501155`, created 2026-05-21 |
+| Legacy D1 contents | **5 users, 8 memories**, still on the old schema |
+| Legacy R2 | `triptrace-media`, created 2026-05-26 |
+| Rebuilt worker `triptrace-ai-next` | **does not exist**; nothing has ever been deployed |
+| Local migration ledger | `0001` through `0012` applied to the local database only |
+
+Two conclusions follow.
+
+**Good news.** The legacy database has none of the rebuild's tables: no `subscriptions`, no
+`usage_counters`, no `analytics_events`, no `share_links`, no `media_cleanup_queue`, no
+`stripe_events`. So no one has ever run a `--remote` migration, and the legacy production data
+is untouched by this rebuild.
+
+**The risk.** `wrangler.jsonc` still binds `DB` and `MEDIA` to those legacy resources. Two
+commands would do damage today:
+
+- `npx wrangler d1 migrations apply triptrace --remote` would apply migrations `0007` to
+  `0012` to a live database holding five real accounts.
+- `npm run cf:deploy` would serve the rebuilt application against legacy rows that predate the
+  fact-confirmation contract, and would write new rows into the same database.
+
+Neither is recoverable by simply reverting the config. Do step 1 before anything else.
+
+## 1. Back Up The Legacy Data First
+
+Even though the plan is not to reuse it, back it up before touching anything. It contains
+real accounts and eight memories.
+
+```bash
+mkdir -p ~/triptrace-legacy-backup
+npx wrangler d1 export triptrace --remote --output ~/triptrace-legacy-backup/triptrace-legacy-$(date +%Y%m%d).sql
 ```
 
-Those belong to the abandoned implementation. Local development is unaffected because
-Wrangler keeps a separate local database, but any command carrying `--remote`, and any
-deploy, would reach the legacy production data.
+Verify the file is not empty and contains `INSERT INTO users`:
 
-Consequences to avoid:
+```bash
+ls -lh ~/triptrace-legacy-backup/
+grep -c "INSERT INTO" ~/triptrace-legacy-backup/triptrace-legacy-*.sql
+```
 
-1. Do not run `wrangler d1 migrations apply triptrace --remote` against the current
-   configuration. The rebuild's migrations `0007` to `0009` would be applied to the legacy
-   database.
-2. Do not deploy before the bindings are repointed. The rebuilt app would read and write
-   legacy rows and legacy media objects.
+The legacy photos live in the `triptrace-media` bucket. There is no bulk download command, so
+if those images matter, list and fetch them individually:
 
-The decision on record is a clean cut with no reuse of legacy production data, so the
-first step is creating new resources and repointing the bindings.
+```bash
+npx wrangler r2 object get triptrace-media/<key> --file ./<name>.jpg --remote
+```
 
-## 2. Create Fresh Resources
+Keep the backup outside this repository. It is gitignored nowhere, and it contains personal
+data.
 
-Names below are suggestions; keep whatever convention you prefer, but make the break from
-the legacy names obvious.
+## 2. Refresh The Wrangler Token
+
+The current token is missing some scopes and Wrangler warns about it. Refresh before creating
+resources, so a half-finished creation does not fail on a permission error:
+
+```bash
+npx wrangler logout
+npx wrangler login
+npx wrangler whoami
+```
+
+Confirm the account id still reads `23e53b75ddd6ee2d8b80031f6a1e45e0`.
+
+## 3. Create Fresh Resources
+
+Names are namespaced to avoid colliding with the other projects already in this account
+(`sigoo`, `pairvu`, `flux-ai`, and others) and to make the break from the legacy names
+obvious.
 
 ```bash
 npx wrangler d1 create triptrace-atlas
 npx wrangler r2 bucket create triptrace-atlas-media
 ```
 
-Record the returned `database_id`.
+Record the `database_id` printed by the first command. Then confirm both exist:
 
-## 3. Repoint The Bindings
+```bash
+npx wrangler d1 list | grep triptrace
+npx wrangler r2 bucket list | grep triptrace
+```
+
+You should now see both the legacy pair and the new pair. Do not delete the legacy pair yet.
+
+## 4. Repoint The Bindings
 
 Edit `wrangler.jsonc`:
 
 ```jsonc
 "d1_databases": [
-  { "binding": "DB", "database_name": "triptrace-atlas", "database_id": "<new id>" }
+  { "binding": "DB", "database_name": "triptrace-atlas", "database_id": "<new id from step 3>" }
 ],
 "r2_buckets": [
   { "binding": "MEDIA", "bucket_name": "triptrace-atlas-media" }
 ]
 ```
 
-Keep the binding names `DB` and `MEDIA`. The application resolves both by binding name.
+Keep the binding names `DB` and `MEDIA`; the application resolves both by binding name.
 
-## 4. Configure Secrets
+Then prove the change took effect before going further:
 
 ```bash
-npx wrangler secret put OPENAI_API_KEY
-npx wrangler secret put ADMIN_TASK_TOKEN
-# Billing. Omit these and checkout reports itself unavailable, while the webhook
-# refuses every delivery. Both are safe states.
-npx wrangler secret put STRIPE_SECRET_KEY
-npx wrangler secret put STRIPE_WEBHOOK_SECRET
-npx wrangler secret put STRIPE_PRICE_FOUNDING_MONTHLY
-npx wrangler secret put STRIPE_PRICE_FOUNDING_ANNUAL
+grep -A3 d1_databases wrangler.jsonc
 ```
 
-Stripe setup order matters: create the two prices first (`$9.99` monthly and `$79`
-annual), then add the webhook endpoint pointing at `https://<deployment>/api/billing/webhook`
-subscribing to `checkout.session.completed`, `customer.subscription.created`,
-`customer.subscription.updated`, and `customer.subscription.deleted`, and only then copy the
-signing secret. The price ids are not secrets, but keeping them with the other billing
-values avoids a half-configured deployment.
+The legacy id `af462150-c240-4e1b-9552-a9245d501155` must no longer appear anywhere in the
+file. This is the single most important check in this runbook.
 
-Notes:
-
-- `OPENAI_MODEL` can stay a plain var; it is not a secret.
-- `ADMIN_TASK_TOKEN` gates the analytics retention endpoint. Without it that endpoint stays
-  disabled and returns `503`, which is intentional. Generate a long random value and do not
-  reuse the local development one.
-- No session secret is required by the current auth flow; sessions are database-backed.
-
-## 5. Apply Migrations
+## 5. Apply Migrations To The New Database
 
 ```bash
 npx wrangler d1 migrations list triptrace-atlas --remote
@@ -95,25 +131,70 @@ npx wrangler d1 migrations apply triptrace-atlas --remote
 npx wrangler d1 migrations list triptrace-atlas --remote
 ```
 
-Expect `0001` through `0009` applied, with nothing pending afterwards.
-
-## 6. Build And Deploy
-
-Stop `npm run dev` first. Development and production builds share `.next`, and running both
-against the same directory causes chunk errors and reload loops.
+Expect `0001` through `0012` applied and nothing pending. Confirm the tables landed:
 
 ```bash
-npm run lint
-npx tsc --noEmit
+npx wrangler d1 execute triptrace-atlas --remote \
+  --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+```
+
+Expect `analytics_events`, `comments`, `d1_migrations`, `feedback`, `media_cleanup_queue`,
+`memories`, `rate_limits`, `sessions`, `share_links`, `stripe_events`, `subscriptions`,
+`usage_counters`, `users`.
+
+## 6. Configure Secrets
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put ADMIN_TASK_TOKEN
+```
+
+Generate the admin token with something unguessable and do not reuse the local placeholder:
+
+```bash
+openssl rand -base64 32
+```
+
+Notes:
+
+- `OPENAI_MODEL` is not a secret. Add it to `vars` in `wrangler.jsonc` if you want to pin it;
+  the code defaults to `gpt-5.2`.
+- Without `ADMIN_TASK_TOKEN` the analytics retention and media cleanup endpoints stay disabled
+  and return `503`. That is a safe state, but retention then relies only on the opportunistic
+  sweep.
+- Stripe secrets come later, in step 9. The app runs fine without them: checkout reports
+  itself unavailable and the webhook refuses every delivery.
+
+Verify the names landed, which does not reveal the values:
+
+```bash
+npx wrangler secret list
+```
+
+## 7. Build And Deploy
+
+Stop `npm run dev` first. Development and production builds share `.next`, and running both
+against it corrupts chunks.
+
+```bash
+npm run test:all
 npm run build
 npm run cf:build
 npm run cf:deploy
 ```
 
-## 7. Smoke Test The Release Candidate
+`npm run test:all` runs lint, type checking, the eight unit suites, and the four HTTP suites
+against a throwaway local server. If it fails, stop; do not deploy.
 
-Run against the deployed URL, not localhost. Use a throwaway account and delete it
-afterwards.
+Expect a `*.workers.dev` URL from the deploy. Record it.
+
+Cost expectation: Workers Paid is `$5/month` for the account, which OpenNext needs for Durable
+Objects. D1 and R2 usage at this stage is inside the included allowances. Measured AI cost is
+about `$0.009` per photo draft and `$0.0024` per text draft, so the `$50` alert is far away.
+
+## 8. Smoke Test The Deployment
+
+Run against the deployed URL. Use a throwaway account and delete it at the end.
 
 | # | Check | Expected |
 |---:|---|---|
@@ -121,59 +202,134 @@ afterwards.
 | 2 | `GET /api/entitlements` signed out | plan `guest`, 0 permanent traces |
 | 3 | Guest generation | one draft succeeds |
 | 4 | Guest generation again | `403 entitlement_guest_demo_used` |
-| 5 | Sign up | `201`, session cookie set with `Secure` |
+| 5 | Sign up | `201`, session cookie has `Secure` |
 | 6 | `GET /api/entitlements` signed in | plan `free`, 3 traces, 5 generations |
-| 7 | Signed-in photo upload | `201` with keys under `users/<id>/` |
-| 8 | Save trace with confirmed facts | `201`, `isFirstTrace: true` |
-| 9 | Save a second trace | `201`, `isFirstTrace: false` |
-| 10 | Owner reads own media | `200` |
-| 11 | Read same media signed out | `403` |
-| 12 | Read own media from a second account | `403` |
-| 13 | Fourth save on Free | `403 entitlement_trace_limit_reached` |
-| 14 | `POST /api/media` with 21 files | `400 entitlement_image_limit_exceeded` |
-| 15 | Delete a trace | `200`, then media returns `404` |
-| 15a | `GET /api/admin/media/cleanup` with token | `200`, empty queue, `needsAttention` false |
-| 16 | `/vault`, `/timeline`, `/map` | load and open the same trace |
-| 17 | `/world-land.json` | `200`, served from the app origin |
-| 18 | `GET /api/admin/analytics/cleanup` without token | `403` |
-| 19 | Same with the correct token | `200`, `retentionDays: 90` |
-| 20 | `/`, `/explore` | indexable; `/vault`, `/timeline`, `/map`, `/plan` `noindex` |
-| 21 | `POST /api/billing/webhook` unsigned | `400 stripe_missing_signature` |
-| 22 | Stripe test checkout end to end | plan becomes Founding Plus after the webhook |
-| 23 | Cancel in the customer portal | returns to Free, all saved traces still accessible |
+| 7 | Import 40 photos | grouped into candidate traces |
+| 8 | Signed-in photo upload | `201`, keys under `users/<id>/` |
+| 9 | Save with confirmed facts | `201`, `isFirstTrace: true` |
+| 10 | Save a second trace | `201`, `isFirstTrace: false` |
+| 11 | Owner reads own media | `200` |
+| 12 | Same media signed out | `403` |
+| 13 | Same media from a second account | `403` |
+| 14 | Fourth save on Free | `403 entitlement_trace_limit_reached` |
+| 15 | `POST /api/media` with 21 files | `400 entitlement_image_limit_exceeded` |
+| 16 | Create a share link, open it signed out | trace visible, photos load |
+| 17 | Revoke the link | page and photos both stop working |
+| 18 | Delete a trace | `200`, then its media returns `404` |
+| 19 | `GET /api/export` | complete JSON |
+| 20 | `GET /api/export/archive` | a ZIP that opens |
+| 21 | Delete the account | `200`, cannot sign in afterwards |
+| 22 | `/vault`, `/timeline`, `/map`, `/plan` | load, and are `noindex` |
+| 23 | `/world-land.json` | `200` from your own origin |
+| 24 | `/privacy`, `/terms` | load, linked in the footer |
+| 25 | `POST /api/billing/webhook` unsigned | `400 stripe_missing_signature` |
+| 26 | Admin endpoints without token | `403`, or `503` if unset |
+| 27 | `/`, `/explore` | indexable |
 
-Then delete the throwaway account and its rows.
-
-The automated suite covers most of this and can be pointed at the deployment:
+The automated suite can also be pointed at the deployment, but it creates real accounts and
+traces there, so only do this on a release candidate you are willing to clean up:
 
 ```bash
 ADMIN_TASK_TOKEN=<production token> npm run test:api -- https://<deployment-url>
 ```
 
-Be aware that it creates real accounts and traces on the target, so only run it against a
-release candidate you are willing to clean up, and run `qa:cleanup` logic manually against
-the remote database afterwards.
+## 9. Stripe
 
-## 8. Analytics Retention In Production
+Do this only after step 8 passes. Until then the app is correct to report billing as
+unavailable.
 
-Retention is enforced two ways:
+### 9.1 Account And Products
 
-1. `POST /api/admin/analytics/cleanup` with the operator token. Suitable for a scheduled
-   caller.
-2. An opportunistic sweep on roughly one percent of analytics writes, so the 90-day rule
-   holds even with no schedule configured.
+1. Create a Stripe account and stay in **test mode** for everything below.
+2. Complete the business profile enough to obtain API keys.
+3. Create one product, `Founding Plus`, with two recurring prices:
+   - `$9.99` monthly
+   - `$79` yearly
+4. Copy both price ids. They look like `price_...` and are not secrets.
+5. Do not change these figures. They are a fixed product decision on record.
 
-If you want a schedule, the simplest option that does not disturb the OpenNext-generated
-worker is an external scheduler or a small separate Worker with a cron trigger that calls
-the endpoint with the token. Decide and record the choice; do not leave it implicit.
+### 9.2 Webhook
 
-The same applies to `POST /api/admin/media/cleanup`, which retries private media that R2
-refused to delete. Trace deletion already drains a few of the caller's own pending keys, so
-the queue heals on normal use, but a scheduled sweep is what clears keys belonging to
-accounts that have gone quiet. Watch `needsAttention` in the `GET` response: a non-zero
-`abandoned` count means keys have exhausted their retries and are waiting on a human.
+1. Add an endpoint at `https://<deployment-url>/api/billing/webhook`.
+2. Subscribe to exactly these events:
+   - `checkout.session.completed`
+   - `customer.subscription.created`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+3. Copy the signing secret, which starts with `whsec_`.
 
-## 9. Evidence To Record In progress.md
+### 9.3 Secrets
+
+```bash
+npx wrangler secret put STRIPE_SECRET_KEY
+npx wrangler secret put STRIPE_WEBHOOK_SECRET
+npx wrangler secret put STRIPE_PRICE_FOUNDING_MONTHLY
+npx wrangler secret put STRIPE_PRICE_FOUNDING_ANNUAL
+npm run cf:deploy
+```
+
+Order matters: create the prices and the webhook first, then set the secrets, then redeploy.
+A half-configured deployment reports billing as unavailable rather than failing oddly, which
+is the intended behaviour but is confusing if unexpected.
+
+### 9.4 Test-Mode Verification
+
+Follow section 11.3 of `docs/manual-testing-guide.md`. The essentials:
+
+1. Start a monthly checkout from `/plan` and pay with card `4242 4242 4242 4242`.
+2. Confirm the plan becomes Founding Plus only after the webhook arrives, not on return.
+3. Confirm `/api/entitlements` then reports 500 traces and 50 monthly drafts.
+4. Repeat with the annual price.
+5. Cancel in the customer portal and confirm the account returns to Free while keeping read,
+   export, and delete rights.
+6. Resend a delivered event from the Stripe dashboard and confirm the response reports
+   `duplicate` without changing state.
+
+Only after all of that passes should live keys replace the test keys.
+
+### 9.5 Before Taking Real Money
+
+- Configure Stripe Tax, or decide explicitly that you are not collecting tax yet.
+- Set a billing alert on the Cloudflare account and a usage limit on the OpenAI account, so the
+  `$50` alert and `$100` ceiling are enforced by the providers rather than by attention.
+- Decide what `Founding` means, since the price is explicitly not locked for life. The terms
+  page currently says pricing may change with notice; keep that promise or change the wording
+  before selling.
+
+## 10. Legal Review
+
+`/privacy` and `/terms` exist and are factually accurate against the code, but they have not
+been reviewed. Both carry a visible line saying so. Do not remove that line yourself.
+
+What to ask a lawyer for, in order of value:
+
+1. A review of the privacy notice against UK GDPR, EU GDPR, and CCPA, given that users are in
+   the US and Europe while the operator is not.
+2. Confirmation of the lawful bases named: contract for running the service, legitimate
+   interest for abuse prevention, consent for analytics.
+3. A data processing position on OpenAI and Cloudflare as sub-processors, including
+   international transfer wording.
+4. A review of the terms, particularly the limitation of liability, the cancellation terms, and
+   the minimum age of 16.
+5. Whether a cookie or consent banner is required. The product sets no advertising or
+   third-party cookies and analytics is first-party and opt-out, which may keep this simple.
+
+Useful facts to hand over, all verifiable in this repository:
+
+- Data collected, field by field: `docs/../migrations/` and the list on `/privacy`.
+- Sub-processors: Cloudflare, OpenAI, Stripe. There is no analytics vendor, no map tile
+  provider, no email provider, and no advertising.
+- Retention: analytics rows for at most 90 days, enforced in code; everything else until the
+  user deletes it.
+- Rights already implemented in product: export as JSON and as an archive with photos,
+  rectification through fact editing, erasure through account deletion, and an analytics
+  opt-out that also honours Global Privacy Control and Do Not Track.
+
+A cheaper middle path, if a full review is out of budget: pay for a single consultation on the
+privacy notice only, since that is where the regulatory exposure sits, and keep the terms as
+they are until there is revenue worth protecting.
+
+## 11. Evidence To Record In progress.md
 
 Paste and fill:
 
@@ -183,14 +339,19 @@ Commit hash:
 D1 database name and id:
 R2 bucket name:
 Migrations applied:
-Secrets configured:
-Smoke test result (which of the 20 checks passed):
+Secrets configured (names only):
+Smoke test result (which of the 27 checks passed):
+Stripe test-mode result:
+Legal review status:
 Known issues:
 ```
 
-## 10. Cost Guardrails
+## 12. Do Not Do These
 
-- Monthly alert at `$50`, hard ceiling at `$100`.
-- Configure Cloudflare notifications and an OpenAI usage limit before opening access.
-- The Guest allowance is one lifetime AI draft per device with an IP throttle, and Free is
-  five per month, so AI spend scales with accounts rather than with raw traffic.
+- Do not run any `--remote` command against `triptrace` or write to `triptrace-media` again.
+- Do not delete the legacy D1 or R2 until the backup in step 1 is verified and you are certain
+  nothing is needed from them.
+- Do not run `npm run build` or `npm run cf:build` while `npm run dev` is running.
+- Do not put live Stripe keys in `.dev.vars`.
+- Do not remove the unreviewed-text notice from `/privacy` or `/terms` before a real review.
+- Do not deploy with `npm run test:all` failing.
