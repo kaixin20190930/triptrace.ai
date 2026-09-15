@@ -92,7 +92,7 @@ Every new user-facing feature must update `docs/manual-testing-guide.md`.
 | M3-006 | IN_PROGRESS | Add share-link revocation | Revocation is immediate for both story and photos, is auditable, and happens automatically on trace or account deletion; covered by the same checks. Browser QA outstanding |
 | M3-007 | IN_PROGRESS | Add digital export | Complete JSON export and a ZIP archive containing the photos are implemented and covered by 50 checks; the per-trace poster is the existing media-ready format. Browser QA in section 9.4.1 is outstanding |
 | M3-008 | IN_PROGRESS | Add complete deletion | Trace, media, share-link, and account deletion are all implemented and verified, including password re-entry, an active-subscription guard, and a post-deletion database sweep. Browser QA in sections 9.4.2 and 9.5.3 is outstanding |
-| M3-009 | NOT_STARTED | Add GDPR/CCPA-facing controls | Consent, export, deletion, privacy notice, and AI disclosure are available |
+| M3-009 | IN_PROGRESS | Add GDPR/CCPA-facing controls | `/privacy` and `/terms` written to match actual code behaviour, a working analytics opt-out, AI disclosure at the point of generation, and a footer on every page. Export and deletion already shipped. Still required: professional legal review before publication, which no amount of engineering can substitute for |
 
 ## Milestone M4: Commercial MVP
 

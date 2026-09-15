@@ -61,6 +61,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           {children}
         </main>
+        {/* The privacy notice has to be reachable from anywhere, not just from settings. */}
+        <footer className="border-t border-border px-4 py-6 text-xs text-muted-foreground sm:px-8 md:px-10">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <span>Every trip leaves traces. Every trace tells a story.</span>
+            <Link href="/privacy" className="underline-offset-4 hover:underline hover:text-foreground">
+              Privacy
+            </Link>
+            <Link href="/terms" className="underline-offset-4 hover:underline hover:text-foreground">
+              Terms
+            </Link>
+            <span>Your traces are private by default.</span>
+          </div>
+        </footer>
       </div>
       <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} />
     </div>

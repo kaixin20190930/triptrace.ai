@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useTheme } from "next-themes";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -1304,6 +1305,21 @@ export function CapturePanel() {
         <Button type="submit" disabled={generating || (!moment.trim() && files.length === 0)} className="w-full">
           {generating ? t("capture.generating") : t("capture.generate")}
         </Button>
+
+        {/*
+          AI processing disclosure, shown before the button that triggers it rather than buried
+          in a policy page. Sending photos to a third party is the one thing here a user would
+          not otherwise expect, so it is stated at the moment of the decision.
+        */}
+        <p className="text-xs leading-5 text-muted-foreground">
+          When you ask for a draft, your note and up to {MAX_VISION_IMAGES} representative photos are
+          sent to OpenAI at reduced resolution to write the wording. Your other traces, your saved
+          facts, and your account details are not sent. AI never fills in or changes a date, place,
+          or person: those stay yours to confirm.{" "}
+          <Link href="/privacy" className="text-primary underline-offset-4 hover:underline">
+            How your data is handled
+          </Link>
+        </p>
       </form>
 
       <div className="self-start rounded-2xl border border-border bg-card p-6">

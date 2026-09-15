@@ -351,6 +351,30 @@ must actually delete.
 Share links are covered in section 9.5, including their removal on trace and account
 deletion, which completes the share-link half of `M3-008`.
 
+## 9.8 Privacy Notice, Terms, And Consent
+
+The value of these pages is accuracy. Test them by checking claims against behaviour, not by
+reading them for tone.
+
+1. Confirm `Privacy` and `Terms` appear in the footer on every page, including `/`, `/vault`, `/timeline`, `/map`, and `/plan`.
+2. Open `/privacy` and confirm it states it has not yet had legal review. Remove that line only after a lawyer has reviewed it.
+3. Check each claim in `What we store` against the schema in `migrations/`. Anything stored but not listed is a defect in the notice.
+4. Confirm the third-party list names exactly Cloudflare, OpenAI, and Stripe. Open the Network panel on `/map` and `/vault` and confirm no request goes anywhere else, which is what makes the "no map tile provider, no analytics vendor" claim true.
+5. Confirm the stated 90-day analytics retention matches `ANALYTICS_RETENTION_DAYS`.
+6. Confirm the claim that photos are sent to OpenAI only when a draft is requested: watch the Network panel while typing and importing photos, and confirm nothing leaves until the draft button is pressed.
+7. Open `/terms` and confirm the plan limits it describes match `/api/entitlements`.
+8. Confirm the terms state that Founding Plus does not lock the price permanently, since that matches the decision on record.
+9. Confirm the terms state that cancelling keeps read, export, and delete rights.
+10. On `/privacy`, confirm the analytics control appears after the page loads, and that unchecking and checking it changes `localStorage["triptrace:analytics-disabled"]`.
+11. Tick the opt-out, then use the product and confirm no request to `/api/analytics` is made at all.
+12. Untick it and confirm analytics resumes.
+13. Enable Global Privacy Control or Do Not Track and confirm the page says the browser signal already switched analytics off, and that the checkbox is replaced rather than shown as a contradictory unchecked box.
+14. Disable JavaScript, reload `/privacy`, and confirm the control explains that it needs JavaScript rather than leaving a message that never resolves.
+15. Confirm no analytics event is sent when the opt-out is changed. Recording that would defeat the control.
+16. In the create flow, confirm the AI disclosure sits next to the draft button, names the photo count, states that other traces and saved facts are not sent, and links to the privacy notice.
+17. Confirm the disclosure appears before any draft is requested, not after.
+18. Confirm both pages are readable at mobile width and that every heading is a real heading for a screen reader.
+
 ## 9.7 Search And Filters
 
 1. Open `/vault` and confirm the search box mentions stories, tags, places, people, and a year.

@@ -477,6 +477,31 @@ The owner decided on 2026-09-02 not to proceed, because sending email requires a
 
 The product consequence is worth stating plainly: without email there is no way to reach a user who does not come back on their own. In-app resurfacing is the entire re-engagement channel, which makes the Phase 3 retention gates harder to reach than the roadmap assumed when it counted on a revisit email. That should be taken into account before reading any retention number as a verdict on the product itself.
 
+Privacy notice, terms, and consent controls (`M3-009`):
+
+- Added `/privacy` and `/terms`, plus a footer on every page so the notice is reachable from anywhere rather than only from settings.
+- Added a working analytics opt-out on `/privacy`. The suppression logic already existed in `src/lib/analytics.ts` but had no interface, so a documented choice was not actually a choice anyone could make.
+- Added an AI processing disclosure directly beside the draft button, naming the photo count sent, stating that other traces and saved facts are not sent, and linking to the notice. Sending photos to a third party is the one thing here a user would not otherwise expect, so it is stated at the moment of the decision rather than buried in a policy.
+- Export and deletion, the other two things this task names, shipped earlier.
+
+The approach taken was to write both documents so that every claim is traceable to code: the stored-data list matches the schema in `migrations/`, the third-party list matches the only outbound calls the application makes, and the retention period matches `ANALYTICS_RETENTION_DAYS`. Accuracy is the part that can actually be guaranteed here, and it is also the part most privacy policies get wrong.
+
+Some claims are only true because of earlier decisions, which is worth noting: "no map tile provider" holds because the map was deliberately built from a bundled outline, and "no analytics vendor" holds because analytics is first-party. Those are not marketing lines, they are consequences of choices already recorded above.
+
+Two small details worth recording:
+
+- The opt-out control is deliberately not instrumented. Recording an event at the moment someone asks not to be recorded would be exactly the behaviour the control exists to prevent.
+- With JavaScript disabled the control cannot work, since the preference lives in local storage. A `noscript` note says so, rather than leaving a visitor on a loading message that never resolves. Browser-level signals still apply in that case.
+
+Hard limitation, stated plainly: **these documents have not had legal review, and no amount of engineering substitutes for it.** Both pages carry a line saying so, which the owner should remove only after a lawyer has reviewed them. `M3-009` is therefore `IN_PROGRESS`, not `DONE`, and the roadmap's existing blocker about unreviewed legal text stands.
+
+Verification:
+
+- `/privacy` and `/terms` return `200`. Content checks confirm the notice names PBKDF2 password hashing, Cloudflare, OpenAI, Stripe, the 90-day retention, the absence of a map tile provider, and the unreviewed-text disclaimer.
+- Footer links to both pages are present in the rendered HTML, and the AI disclosure appears in the create flow.
+- The opt-out control ships in the client bundle and appears after hydration, which was verified rather than assumed.
+- `npm run lint`, `tsc --noEmit`, `git diff --check`, `npm run build`, and `npm run cf:build` pass, with `/privacy` and `/terms` registered as static routes.
+
 Pre-existing local residue left untouched, since it is not this session's to remove:
 
 - `analytics-test-20260729@example.invalid`, `session1-test-*`, and `session2-test-*` accounts remain in local D1. The first is cited as analytics verification evidence, so deleting it would orphan those event rows.
@@ -521,13 +546,16 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 | 2026-09-02 | Resurfacing is stable for a given day | A memory that appears and vanishes on refresh reads as a bug, not as serendipity |
 | 2026-09-02 | Facet counts exclude their own filter | Otherwise choosing a year collapses the year list and traps the user |
 | 2026-09-02 | Revisit email deferred indefinitely | No budget for a sending provider; in-app resurfacing becomes the only re-engagement channel, which lowers reachable retention |
+| 2026-09-02 | Privacy and terms describe code, not intentions | Every claim is checkable against the schema and the outbound calls, which is the only part that can be guaranteed without a lawyer |
+| 2026-09-02 | The analytics opt-out is not instrumented | Recording an event as someone asks not to be recorded would defeat the control |
+| 2026-09-02 | AI disclosure sits beside the draft button | Sending photos to a third party is the one surprising step, so it belongs at the decision, not in a policy page |
 
 ## Blockers
 
 - Fresh production D1 and R2 resources for the rebuilt product have not been provisioned.
 - Stripe account, prices, webhook endpoint, and tax configuration do not exist yet. The integration is implemented and locally verified; only the account and keys are missing.
 - Historical prototype subjects have not been selected.
-- Complete English privacy and terms text has not received professional legal review.
+- `/privacy` and `/terms` now exist and are factually accurate against the code, but they have not received professional legal review. Both carry a visible line saying so, which must not be removed until a lawyer has reviewed them.
 - Production needs `ADMIN_TASK_TOKEN` set before the analytics retention endpoint can be used; until then only the opportunistic sweep enforces the 90-day rule.
 - First-party activation analytics are implemented and locally verified at the API/D1 layer; browser-level funnel QA and production migration remain.
 
