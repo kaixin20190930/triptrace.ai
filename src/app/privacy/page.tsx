@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AnalyticsPreference } from "@/components/legal/analytics-preference";
-import { PRIVACY_CONTACT_EMAIL } from "@/lib/legal";
+import { DATA_CONTROLLER, PRIVACY_CONTACT_EMAIL } from "@/lib/legal";
 
 /**
  * Privacy notice.
@@ -45,6 +45,21 @@ export default function PrivacyPage() {
           description rather than as finished legal wording.
         </p>
       </header>
+
+      <Section title="Who is responsible">
+        {DATA_CONTROLLER ? (
+          <p>
+            TripTrace.ai is operated by {DATA_CONTROLLER}, which is the party responsible for the
+            information described here and the one you are dealing with when you use the service.
+          </p>
+        ) : (
+          <p>
+            We have not yet named the entity responsible for your information here, which is a gap
+            worth being upfront about rather than papering over: it is the first thing a privacy
+            notice is supposed to tell you. It is being settled, and this page will name it.
+          </p>
+        )}
+      </Section>
 
       <Section title="The short version">
         <ul className="list-disc space-y-2 pl-5">

@@ -14,9 +14,9 @@ personal archive: a map, a timeline, and individual entries called traces. AI dr
 trace. The user confirms the facts. Traces are private by default and can be shared one at a time
 through a revocable link.
 
-Target market is the UK, EU, and United States. The operator is a single individual. There is no
-company entity on record in this repository, no registered address, and no published contact
-address. See section 8.
+Target market is the UK, EU, and United States. The intended operating entity is Moxion Labs LLC, a
+US-registered company, which is not yet reflected in the hosting account, the payment setup, or the
+terms. See section 8.
 
 Currently live at `https://triptrace.ai`, with no marketing, no paying customers, and no Stripe
 account configured. Billing code exists but reports itself unavailable until Stripe is set up.
@@ -143,21 +143,41 @@ Listed as gaps rather than drafted, because each is a judgement call:
 - Age. Both documents state sixteen. The threshold varies by member state and is thirteen under US
   COPPA. There is no age verification beyond the statement, and nothing detects a child's account.
 
-## 8. The one blocking gap
+## 8. Controller identity and contact route
 
-Both documents tell the reader to "contact the address published on the site". **No contact address
-exists anywhere in the application.** Searching the entire source for `mailto:`, `@triptrace`, and
-`support@` returns nothing.
+Both documents used to tell the reader to "contact the address published on the site" while no
+address existed anywhere in the application. That wording is gone. Both pages now state the
+position honestly and point at the self-service controls, and both read from `src/lib/legal.ts`, so
+filling in one file completes them.
 
-This is the first thing to fix, and it needs two facts that only the operator can supply:
+**Contact route.** Cloudflare Email Routing is enabled on the zone and its MX records are live.
+`moxion.ai@gmail.com` has been added as a forwarding destination and is awaiting the operator
+clicking Cloudflare's verification mail. Once verified, `privacy@triptrace.ai` forwards there. The
+constant stays `null` until mail has actually been observed arriving, because an address that
+silently discards mail is worse than none: it looks like it works.
 
-1. Who the controller is. A named individual, or a company, and in which country. This determines
-   the notice's controller identity, the lead supervisory authority, and the governing law clause.
-2. A working contact address for privacy requests. Cloudflare Email Routing can forward
-   `privacy@triptrace.ai` to a personal inbox at no cost, and the domain already sits in the
-   account.
+Publishing `privacy@triptrace.ai` rather than the personal Gmail address is deliberate. It keeps a
+personal address off a public page, and it can be repointed later without editing the notice.
 
-Until both exist, the privacy notice cannot be complete, whatever its wording.
+**Controller.** The operator's intention is to name **Moxion Labs LLC**, a US-registered company.
+The relevant points for review:
+
+- Under GDPR the controller is whoever decides the purposes and means of processing, which is a
+  question of fact. Naming a company that does not actually operate the service would be
+  inaccurate, however reasonable it looks.
+- Three things should line up with whatever is named, and currently do not. The Cloudflare account
+  is held under a personal Gmail address. No Stripe account exists yet. The terms name no
+  contracting party at all. Stripe not existing yet is fortunate timing: alignment is cheap now and
+  awkward later.
+- **Needs a decision, and it is new because the entity is American.** A US controller offering a
+  service to people in the EU and UK, and arguably monitoring their behaviour through product
+  analytics, raises the question of whether an Article 27 representative in the EU and a UK
+  equivalent are required. This is a recurring paid engagement, so it belongs in the cost of the
+  decision rather than being discovered afterwards.
+- The state of incorporation should appear alongside the company name in the notice. It is not
+  recorded in this repository.
+- Whether US state privacy statutes beyond California now apply to the entity is also open, though
+  volume thresholds are unlikely to be met by a product with no customers.
 
 ## 9. What has been done to the pages without legal input
 
