@@ -557,7 +557,7 @@ Pre-existing local residue left untouched, since it is not this session's to rem
   narrative acceptance, browser QA of photo grouping, Stripe, and legal review.
 - Stripe account, prices, webhook endpoint, and tax configuration do not exist yet. The integration is implemented and locally verified; only the account and keys are missing.
 - Historical prototype subjects have not been selected.
-- `/privacy` and `/terms` now exist and are factually accurate against the code, but they have not received professional legal review. Both carry a visible line saying so, which must not be removed until a lawyer has reviewed them.
+- `/privacy` and `/terms` have not received professional legal review. Both carry a visible line saying so, which must not be removed until a lawyer has reviewed them. `docs/legal-review-brief.md` now states what the software does field by field, with the open questions separated, so the review pays for judgement rather than discovery. Two gaps block completion regardless of wording and only the owner can close them: who the data controller is, and a working contact address. Both are `null` in `src/lib/legal.ts`, and until they are set the pages say plainly that no contact route exists rather than pointing at an address that does not. The main substantive risk identified is that analytics is opt-out by default for EU and UK visitors while writing a persistent identifier to the browser; the gate is in one place if that has to become opt-in.
 - ~~Production needs `ADMIN_TASK_TOKEN`.~~ Set 2026-09-15, so the retention endpoint is usable in addition to the opportunistic sweep.
 - First-party activation analytics are implemented and locally verified at the API/D1 layer; browser-level funnel QA and production migration remain.
 

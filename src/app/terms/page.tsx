@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { PRIVACY_CONTACT_EMAIL } from "@/lib/legal";
 
 /**
  * Terms of use.
@@ -13,7 +14,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/terms" },
 };
 
-const LAST_UPDATED = "2 September 2026";
+const LAST_UPDATED = "15 September 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -120,16 +121,51 @@ export default function TermsPage() {
         </p>
       </Section>
 
+      <Section title="What these terms do not yet cover">
+        <p>
+          Rather than let you assume otherwise: these terms say nothing about governing law, nothing
+          about limiting our liability, and nothing about refunds. Most services state all three. We
+          have not, because stating them properly takes a lawyer and we would rather leave a visible
+          gap than write something that reads convincingly and means little.
+        </p>
+        <p>
+          Nothing is being sold yet, so the parts that matter most once money changes hands, including
+          the withdrawal rights EU and UK consumers have when buying online, will be settled before
+          any payment is possible rather than afterwards.
+        </p>
+      </Section>
+
       <Section title="Changes and contact">
         <p>
-          If these terms change, the date above changes. For anything to do with your account,
-          billing, or content, contact the address published on the site. How we handle your data is
-          described in the{" "}
+          If these terms change, the date above changes. How we handle your data is described in the{" "}
           <Link href="/privacy" className="text-primary underline-offset-4 hover:underline">
             privacy notice
           </Link>
           .
         </p>
+        {PRIVACY_CONTACT_EMAIL ? (
+          <p>
+            For anything to do with your account or your content, write to{" "}
+            <a
+              href={`mailto:${PRIVACY_CONTACT_EMAIL}`}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              {PRIVACY_CONTACT_EMAIL}
+            </a>
+            .
+          </p>
+        ) : (
+          <p>
+            We do not yet publish a contact address. You can export everything and delete your account
+            yourself from{" "}
+            <Link href="/plan" className="text-primary underline-offset-4 hover:underline">
+              Plan and usage
+            </Link>
+            , which covers most of what you might otherwise need to ask us for. For anything else,
+            there is currently no route, and saying so is better than listing an address that nobody
+            reads.
+          </p>
+        )}
       </Section>
     </main>
   );

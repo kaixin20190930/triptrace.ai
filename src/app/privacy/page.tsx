@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AnalyticsPreference } from "@/components/legal/analytics-preference";
+import { PRIVACY_CONTACT_EMAIL } from "@/lib/legal";
 
 /**
  * Privacy notice.
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/privacy" },
 };
 
-const LAST_UPDATED = "2 September 2026";
+const LAST_UPDATED = "15 September 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -80,6 +81,12 @@ export default function PrivacyPage() {
           people&apos;s names, or search terms. Events are attached to a random identifier stored in
           your browser, and to your account id when you are signed in.
         </p>
+        <p>
+          Being straight about the default: this is on unless you turn it off, and the random
+          identifier is written to your browser the first time you do something we count. If your
+          browser sends Global Privacy Control or Do Not Track we treat that as a no and record
+          nothing, without you having to find the switch below.
+        </p>
         <p className="font-medium text-foreground">Abuse prevention</p>
         <p>
           Short-lived counters keyed to a value derived from your IP address, used to stop one
@@ -116,7 +123,36 @@ export default function PrivacyPage() {
         </p>
         <p>
           There is no analytics vendor, no advertising network, no map tile provider, and no email
-          provider. Both Cloudflare and OpenAI may process data in the United States.
+          provider. The world map is a file we serve ourselves, which is the reason there is no tile
+          provider to list: looking at your own map should not tell a stranger which part of the world
+          you were looking at.
+        </p>
+        <p>
+          Cloudflare, OpenAI, and Stripe may all process data in the United States, so using
+          TripTrace.ai involves your information leaving the UK or the EU. We rely on the safeguards
+          each of them publishes for those transfers rather than on any arrangement specific to us.
+        </p>
+      </Section>
+
+      <Section title="Why we are allowed to store it">
+        <p>
+          Your account, your traces, and your photos are stored because that is the service you asked
+          for. Without them there is no Atlas to show you.
+        </p>
+        <p>
+          Abuse-prevention counters and product analytics exist because a service that anyone can
+          reach needs to survive being misused, and because we need to know whether people manage to
+          finish making their first trace. Analytics is the one thing here you can switch off without
+          losing the product, and the control is below.
+        </p>
+        <p>
+          Billing records exist because we are required to keep a record of a transaction we were
+          paid for.
+        </p>
+        <p>
+          Nothing here makes an automated decision about you. Plan limits are arithmetic, not
+          profiling, and no automated process judges you or restricts you based on inferences about
+          who you are.
         </p>
       </Section>
 
@@ -125,6 +161,10 @@ export default function PrivacyPage() {
           Traces, photos, and your account are kept until you delete them. Deleting a trace removes
           its database record immediately and its photo files as well; if storage refuses a delete,
           the job is queued and retried until it succeeds.
+        </p>
+        <p>
+          We do not delete accounts for being inactive, and we do not currently set an end date on an
+          account nobody comes back to. If that changes you will be told before it affects you.
         </p>
         <p>
           Product analytics rows are kept for at most 90 days and then deleted. That limit is
@@ -162,7 +202,18 @@ export default function PrivacyPage() {
         <p>
           If you are in the UK or EU, these cover access, rectification, erasure, and portability. If
           you are in California, they cover access, deletion, and correction. We do not sell personal
-          information, so there is nothing to opt out of on that front.
+          information, and we do not share it for cross-context behavioural advertising, so there is
+          nothing to opt out of on either front.
+        </p>
+        <p>
+          Most of these you can exercise yourself, immediately, without asking us. That is deliberate:
+          a right you have to request is weaker than a button you can press.
+        </p>
+        <p>
+          If you think we have handled your information badly, you can complain to a data protection
+          regulator. In the UK that is the Information Commissioner&apos;s Office; in the EU it is the
+          supervisory authority where you live. You do not have to come to us first, though we would
+          rather you gave us the chance to fix it.
         </p>
       </Section>
 
@@ -194,14 +245,36 @@ export default function PrivacyPage() {
       <Section title="Changes and contact">
         <p>
           If this notice changes in a way that affects you, the date above changes and the change is
-          recorded in the project history. For any privacy request, including access or erasure,
-          contact the address published on the site. You can also exercise access and erasure
-          yourself, immediately, from{" "}
+          recorded in the project history.
+        </p>
+        <p>
+          You can exercise access, portability, correction, and erasure yourself, immediately, from{" "}
           <Link href="/plan" className="text-primary underline-offset-4 hover:underline">
             Plan and usage
           </Link>
-          .
+          . Nothing needs to go through us for those.
         </p>
+        {PRIVACY_CONTACT_EMAIL ? (
+          <p>
+            For anything you cannot do yourself, or to reach a person about how your information is
+            handled, write to{" "}
+            <a
+              href={`mailto:${PRIVACY_CONTACT_EMAIL}`}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              {PRIVACY_CONTACT_EMAIL}
+            </a>
+            .
+          </p>
+        ) : (
+          <p>
+            We do not yet publish a contact address, which is a real gap and is being fixed rather
+            than explained away. Until it is, the self-service controls above are the whole of what
+            we can offer, and they already cover access, portability, correction, and erasure. If you
+            need something outside them, the honest answer today is that there is no route, and we
+            would rather say so than point you at an address that does not exist.
+          </p>
+        )}
       </Section>
     </main>
   );

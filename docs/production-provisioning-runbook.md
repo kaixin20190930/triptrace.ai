@@ -344,6 +344,15 @@ Only after all of that passes should live keys replace the test keys.
 `/privacy` and `/terms` exist and are factually accurate against the code, but they have not
 been reviewed. Both carry a visible line saying so. Do not remove that line yourself.
 
+**Hand `docs/legal-review-brief.md` to the lawyer.** It states what the software actually does,
+field by field, with the open questions separated out, so the engagement pays for judgement rather
+than for discovery. The list below is a summary of what that document covers in detail.
+
+Two things block completion regardless of wording, and only the operator can supply them: who the
+data controller is, and a working contact address. Both pages currently say so in plain sight
+rather than pointing at an address that does not exist. Set them in `src/lib/legal.ts` and both
+pages pick them up.
+
 What to ask a lawyer for, in order of value:
 
 1. A review of the privacy notice against UK GDPR, EU GDPR, and CCPA, given that users are in
@@ -354,8 +363,11 @@ What to ask a lawyer for, in order of value:
    international transfer wording.
 4. A review of the terms, particularly the limitation of liability, the cancellation terms, and
    the minimum age of 16.
-5. Whether a cookie or consent banner is required. The product sets no advertising or
-   third-party cookies and analytics is first-party and opt-out, which may keep this simple.
+5. Whether analytics may stay opt-out for EU and UK visitors. This is the main open risk, not a
+   formality. Analytics is first-party, carries no content, involves no vendor and no profiling,
+   and honours Global Privacy Control and Do Not Track, but it does write a persistent identifier
+   to the visitor's browser by default. If opt-in is required the code change is small: one gate in
+   `trackEvent` controls every write.
 
 Useful facts to hand over, all verifiable in this repository:
 
