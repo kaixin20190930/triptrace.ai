@@ -552,11 +552,13 @@ Pre-existing local residue left untouched, since it is not this session's to rem
 
 ## Blockers
 
-- Fresh production D1 and R2 resources for the rebuilt product have not been provisioned.
+- ~~Fresh production D1 and R2 resources have not been provisioned.~~ Done 2026-09-15. The product
+  is deployed and `https://triptrace.ai` serves it. What remains is not infrastructure: real-photo
+  narrative acceptance, browser QA of photo grouping, Stripe, and legal review.
 - Stripe account, prices, webhook endpoint, and tax configuration do not exist yet. The integration is implemented and locally verified; only the account and keys are missing.
 - Historical prototype subjects have not been selected.
 - `/privacy` and `/terms` now exist and are factually accurate against the code, but they have not received professional legal review. Both carry a visible line saying so, which must not be removed until a lawyer has reviewed them.
-- Production needs `ADMIN_TASK_TOKEN` set before the analytics retention endpoint can be used; until then only the opportunistic sweep enforces the 90-day rule.
+- ~~Production needs `ADMIN_TASK_TOKEN`.~~ Set 2026-09-15, so the retention endpoint is usable in addition to the opportunistic sweep.
 - First-party activation analytics are implemented and locally verified at the API/D1 layer; browser-level funnel QA and production migration remain.
 
 ## Deployment Evidence
@@ -670,9 +672,9 @@ TripTrace-related resources and their disposition:
 | Worker `triptrace-ai-next` | current product, version `f7a4503e` | keep |
 | D1 `triptrace-atlas` | new production database, empty | keep |
 | R2 `triptrace-atlas-media` | new media bucket, 0 objects | keep |
-| D1 `triptrace` (`af462150-…`) | 5 users, 8 memories | obsolete, backed up |
-| R2 `triptrace-media` | 2 objects, 9,776,636 bytes | obsolete, backed up |
-| Pages project `triptrace-ai` | last deployed 2026-06-16, no longer holds the apex | obsolete once the apex is confirmed |
+| D1 `triptrace` (`af462150-…`) | 5 users, 8 memories | **deleted**, backed up first |
+| R2 `triptrace-media` | 2 objects, 9,776,636 bytes | **deleted**, backed up first |
+| Pages project `triptrace-ai` | last deployed 2026-06-16 | **deleted** |
 
 What the legacy database actually contains, which matters for deciding whether deleting it costs
 anything: seven of the eight memories belong to the owner's own account, the eighth is an
@@ -680,16 +682,30 @@ eight-character test string, and the remaining three accounts hold zero content.
 ever created a trace. Two of those accounts are third-party addresses holding only an email and a
 password hash, so discarding the database removes personal data rather than losing anything.
 
-Both legacy resources were exported before any deletion, outside the repository, to
+Both legacy resources were exported before deletion, outside the repository, to
 `~/triptrace-legacy-backup-2026-09-15/`: a 74-statement SQL dump of the database, and both R2
 objects verified byte-exact against the remote total of 9,776,636 bytes.
 
-The apex was moved to the Worker on 2026-09-15, so the Pages project no longer serves
-`triptrace.ai`. It is still deployed at `triptrace-ai.pages.dev` and still reads the legacy
-database, which is why the legacy database has not been deleted yet: doing so first would break a
-site that is still up. The remaining order is to confirm the apex behaves, then delete the legacy
-database and bucket, then remove or rotate the OpenAI key held by the Pages project, then retire
-the project itself.
+All three legacy resources were deleted on 2026-09-15, in the order that kept everything serving:
+the Pages project first, because it was still reading the legacy database, then the bucket, then
+the database.
+
+Deleting the Pages project needed more than one command. Cloudflare refuses to delete a project
+with too many deployments, and it also refuses to delete the active production deployment, so the
+sequence was: delete the 123 non-active deployments, then delete the last non-active one, then
+delete the project, which took the active deployment with it. Two things made this slower than it
+should have been and are worth remembering. The Wrangler OAuth token expires part way through a
+long loop, and expired calls fail as `10000 Authentication error` rather than anything obvious, so
+a batch can silently delete nothing; re-running any Wrangler command refreshes it. And the
+deployments listing without an `env` filter returned an empty list while `?env=production`
+returned the real count, so an unfiltered check reported success when 25 deployments remained.
+
+Removing or rotating the OpenAI key that the Pages project held is no longer a separate task; it
+went with the project.
+
+Verified after each deletion: the apex kept returning 200 with the English title, and a full smoke
+run against `https://triptrace.ai` afterwards passed 24 with 0 failures, the three skips being the
+browser clustering check and the two AI checks that were not requested on that run.
 
 The four Chinese traces that were publicly readable at `triptrace.ai/api/memories` are no longer
 reachable from the apex. The legacy schema defaulted `is_public` to 1, so that exposure was the

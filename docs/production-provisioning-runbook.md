@@ -11,33 +11,39 @@ project owner to run deliberately.
 
 ## 0. Verified Current State
 
-Checked with read-only commands on 2026-09-15:
+**Steps 1 through 8 are complete as of 2026-09-15.** They are kept below as the record of how the
+current setup came about, and because steps 9 onwards have not been done. Verified end state:
 
 | Fact | Value |
 |---|---|
 | Cloudflare account | `liukai19911010@gmail.com`, id `23e53b75ddd6ee2d8b80031f6a1e45e0` |
-| Legacy D1 | `triptrace`, id `af462150-c240-4e1b-9552-a9245d501155`, created 2026-05-21 |
-| Legacy D1 contents | **5 users, 8 memories**, still on the old schema |
-| Legacy R2 | `triptrace-media`, created 2026-05-26 |
-| Rebuilt worker `triptrace-ai-next` | **does not exist**; nothing has ever been deployed |
-| Local migration ledger | `0001` through `0012` applied to the local database only |
+| Worker | `triptrace-ai-next`, `workers_dev` enabled, route `triptrace.ai/*` |
+| Apex | `https://triptrace.ai` serves the Worker; `www` 301s to it |
+| Fallback URL | `https://triptrace-ai-next.liukai19911010.workers.dev` |
+| D1 | `triptrace-atlas`, id `0d56a659-0aa9-4eb2-adca-8a150c212ee0`, migrations `0001`–`0012` |
+| R2 | `triptrace-atlas-media` |
+| Secrets | `OPENAI_API_KEY`, `ADMIN_TASK_TOKEN` |
+| Smoke test | 26 of 27, 1 skipped by design, run against the apex |
+| Legacy D1 `triptrace` | **deleted** 2026-09-15, backed up first |
+| Legacy R2 `triptrace-media` | **deleted** 2026-09-15, backed up first |
+| Legacy Pages project `triptrace-ai` | **deleted** 2026-09-15 |
 
-Two conclusions follow.
+Backups of the deleted legacy resources are outside the repository at
+`~/triptrace-legacy-backup-2026-09-15/`, and the SQL dump was verified by replaying it into a
+scratch SQLite database and confirming it restores 5 users and 8 memories.
 
-**Good news.** The legacy database has none of the rebuild's tables: no `subscriptions`, no
-`usage_counters`, no `analytics_events`, no `share_links`, no `media_cleanup_queue`, no
-`stripe_events`. So no one has ever run a `--remote` migration, and the legacy production data
-is untouched by this rebuild.
+Two things remain untidy rather than broken. The apex is served by a route instead of a custom
+domain, because the retired Pages project left a DNS record behind and a custom domain refuses a
+hostname that already has externally managed records; fixing it needs a token with DNS edit
+scope. And Stripe, legal review, and real-photo acceptance are all still outstanding.
 
-**The risk.** `wrangler.jsonc` still binds `DB` and `MEDIA` to those legacy resources. Two
-commands would do damage today:
+### Original assessment, kept for the record
 
-- `npx wrangler d1 migrations apply triptrace --remote` would apply migrations `0007` to
-  `0012` to a live database holding five real accounts.
-- `npm run cf:deploy` would serve the rebuilt application against legacy rows that predate the
-  fact-confirmation contract, and would write new rows into the same database.
-
-Neither is recoverable by simply reverting the config. Do step 1 before anything else.
+At the time this runbook was written, `wrangler.jsonc` still bound `DB` and `MEDIA` to the legacy
+resources, which held 5 real users and 8 memories on the old schema. Two commands would have done
+damage: a `--remote` migration against `triptrace`, or a deploy that served the rebuilt app
+against legacy rows and wrote new ones beside them. Both hazards are gone now that the legacy
+resources are.
 
 ## 1. Back Up The Legacy Data First
 
@@ -385,10 +391,10 @@ Known issues:
 
 ## 12. Do Not Do These
 
-- Do not run any `--remote` command against `triptrace` or write to `triptrace-media` again.
-- Do not delete the legacy D1 or R2 until the backup in step 1 is verified and you are certain
-  nothing is needed from them.
 - Do not run `npm run build` or `npm run cf:build` while `npm run dev` is running.
+- Do not remove `workers_dev: true` or the `routes` entry from `wrangler.jsonc`. Declaring a route
+  makes Wrangler disable workers.dev unless it is set explicitly, and removing either one can take
+  the apex or its fallback offline on the next deploy.
 - Do not put live Stripe keys in `.dev.vars`.
 - Do not remove the unreviewed-text notice from `/privacy` or `/terms` before a real review.
 - Do not deploy with `npm run test:all` failing.
