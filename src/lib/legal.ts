@@ -21,8 +21,14 @@
  * should be contracting with it.
  */
 
-/** Contact address for privacy requests that cannot be self-served. */
-export const PRIVACY_CONTACT_EMAIL: string | null = null;
+/**
+ * Contact address for privacy requests that cannot be self-served.
+ *
+ * Forwarded to a monitored inbox through Cloudflare Email Routing, which is why the published
+ * address is on the domain rather than being a personal mailbox: it keeps a personal address off
+ * a public page, and the destination can be changed later without editing the notice.
+ */
+export const PRIVACY_CONTACT_EMAIL: string | null = "privacy@triptrace.ai";
 
 /** The operating entity, including its jurisdiction, for example "Example Labs LLC (Delaware, USA)". */
 export const DATA_CONTROLLER: string | null = null;

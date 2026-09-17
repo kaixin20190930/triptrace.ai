@@ -150,11 +150,14 @@ address existed anywhere in the application. That wording is gone. Both pages no
 position honestly and point at the self-service controls, and both read from `src/lib/legal.ts`, so
 filling in one file completes them.
 
-**Contact route.** Cloudflare Email Routing is enabled on the zone and its MX records are live.
-`moxion.ai@gmail.com` has been added as a forwarding destination and is awaiting the operator
-clicking Cloudflare's verification mail. Once verified, `privacy@triptrace.ai` forwards there. The
-constant stays `null` until mail has actually been observed arriving, because an address that
-silently discards mail is worse than none: it looks like it works.
+**Contact route.** Done. `privacy@triptrace.ai` is published on both pages and forwards to a
+monitored inbox through Cloudflare Email Routing. Verified: routing enabled and `ready`, MX records
+live at `route1`, `route2` and `route3.mx.cloudflare.net`, destination address verified, rule
+enabled and matching the literal recipient.
+
+What has not been observed is a message arriving. The configuration is verified end to end but a
+delivery test has not been run, and the realistic failure mode is a forwarded message landing in
+the destination's spam folder rather than the route being wrong.
 
 Publishing `privacy@triptrace.ai` rather than the personal Gmail address is deliberate. It keeps a
 personal address off a public page, and it can be repointed later without editing the notice.
