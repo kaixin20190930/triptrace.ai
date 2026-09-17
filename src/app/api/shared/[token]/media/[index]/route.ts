@@ -15,24 +15,16 @@ export const dynamic = "force-dynamic";
  *
  * The token is re-resolved on every request, which is what makes revocation immediate for
  * photos and not just for the story.
- *
- * The segment is `[position]` rather than the more obvious `[index]` for a reason worth keeping.
- * With `[index]` the production build registers this route correctly, but the development server
- * never registers it at all: the request falls through to the App Router's not-found page, so it
- * answers 404 with HTML instead of ever entering this handler. That combination is nasty, because
- * the deployed site works while every fresh checkout appears to have a broken sharing feature, and
- * the deployment smoke test passes while the local suite fails. Renaming the segment fixes it.
- * The URL shape is unchanged, since the segment is dynamic either way.
  */
 export async function GET(
   _request: Request,
-  { params }: { params: Promise<{ token: string; position: string }> },
+  { params }: { params: Promise<{ token: string; index: string }> },
 ) {
   try {
-    const { token, position } = await params;
+    const { token, index } = await params;
     const db = await requireDb();
 
-    const resolved = await resolveSharedPhoto(db, token, Number.parseInt(position, 10));
+    const resolved = await resolveSharedPhoto(db, token, Number.parseInt(index, 10));
     if (!resolved) {
       // Unknown token, revoked link, expired link, and out-of-range index are deliberately
       // indistinguishable.

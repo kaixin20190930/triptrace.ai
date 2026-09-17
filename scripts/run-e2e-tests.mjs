@@ -11,8 +11,9 @@
 // `.next` and will invalidate the development server's chunks.
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
+import { join, relative, sep } from "node:path";
 
 const DEV_VARS = ".dev.vars";
 const READY_TIMEOUT_MS = 120_000;
@@ -103,6 +104,58 @@ async function waitForReady(baseUrl) {
   return false;
 }
 
+/**
+ * Requests every API route once so the development server compiles all of them up front.
+ *
+ * This is not an optimisation. The development server compiles routes on demand, and a request
+ * for a route it has not compiled yet does not wait for compilation: it falls through to the App
+ * Router, which answers 404 with an HTML not-found page. So the first test to touch any given
+ * route can fail for no reason other than being first.
+ *
+ * That failure mode is unpleasant to diagnose because it depends on state outside the repository.
+ * A machine that has run `npm run dev` has a warm `.next` and passes, while a fresh checkout and
+ * a CI runner fail on whichever route the suites happen to reach first. The deployed site is never
+ * affected, because a production build compiles everything ahead of time, so the deployment smoke
+ * test passes while the local suite fails.
+ *
+ * Routes are discovered from the filesystem rather than listed here, so a new endpoint is covered
+ * without anyone remembering to add it. Dynamic segments get a placeholder; the responses are
+ * irrelevant and are deliberately ignored, since compiling the route is the entire point.
+ */
+async function warmUpApiRoutes(baseUrl) {
+  const apiRoot = join(process.cwd(), "src", "app", "api");
+  const urls = [];
+
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.name === "route.ts" || entry.name === "route.tsx") {
+        const segments = relative(apiRoot, dir).split(sep).filter(Boolean);
+        // `[token]` and `[...rest]` alike become something harmless and clearly not real.
+        const path = segments.map((s) => (s.startsWith("[") ? "warmup" : s)).join("/");
+        urls.push(`${baseUrl}/api/${path}`);
+      }
+    }
+  };
+
+  try {
+    walk(apiRoot);
+  } catch {
+    return 0;
+  }
+
+  await Promise.all(
+    urls.map((url) =>
+      fetch(url).catch(() => {
+        // A refusal is fine. Only compilation matters.
+      }),
+    ),
+  );
+  return urls.length;
+}
+
 /** Stops the server and waits for it to actually exit, so nothing is still writing. */
 function stopDevServer(child) {
   if (!child || child.exitCode !== null) return Promise.resolve();
@@ -167,6 +220,8 @@ async function main() {
     console.error("The test server did not become ready in time.");
     process.exit(1);
   }
+  const warmed = await warmUpApiRoutes(baseUrl);
+  log(`Compiled ${warmed} API routes before running the suites`);
 
   const childEnv = {
     ...process.env,
