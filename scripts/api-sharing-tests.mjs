@@ -288,14 +288,24 @@ async function run() {
     }),
   );
   const otherToken = (otherShare?.url || "").split("/s/")[1] || "";
-  const firstBytes = Buffer.from(await (await fetch(`${BASE_URL}/api/shared/${token}/media/0`)).arrayBuffer());
-  const secondBytes = Buffer.from(
-    await (await fetch(`${BASE_URL}/api/shared/${otherToken}/media/0`)).arrayBuffer(),
-  );
+  // Assert the status and the content type, not just that bytes came back. An earlier version
+  // of this check only required a non-empty body, which the App Router's not-found page satisfies
+  // handsomely: it passed while every shared photo was in fact answering 404 with 17kB of HTML.
+  const firstPhoto = await fetch(`${BASE_URL}/api/shared/${token}/media/0`);
+  const firstBytes = Buffer.from(await firstPhoto.arrayBuffer());
+  const secondPhoto = await fetch(`${BASE_URL}/api/shared/${otherToken}/media/0`);
+  const secondBytes = Buffer.from(await secondPhoto.arrayBuffer());
+  const bothAreImages =
+    (firstPhoto.headers.get("content-type") || "").startsWith("image/") &&
+    (secondPhoto.headers.get("content-type") || "").startsWith("image/");
   check(
     "each token serves only its own trace's photos",
-    firstBytes.length > 0 && secondBytes.length > 0,
-    `${firstBytes.length} and ${secondBytes.length} bytes`,
+    firstPhoto.status === 200 &&
+      secondPhoto.status === 200 &&
+      bothAreImages &&
+      firstBytes.length > 0 &&
+      secondBytes.length > 0,
+    `${firstPhoto.status} and ${secondPhoto.status}, ${firstBytes.length} and ${secondBytes.length} bytes, images=${bothAreImages}`,
   );
   await owner.fetch(`/api/memories?memoryId=${encodeURIComponent(notSharedTrace.body?.memory?.id)}`, {
     method: "DELETE",
