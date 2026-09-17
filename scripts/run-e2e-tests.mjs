@@ -17,6 +17,8 @@ import { join, relative, sep } from "node:path";
 
 const DEV_VARS = ".dev.vars";
 const READY_TIMEOUT_MS = 120_000;
+/** Per-route ceiling for on-demand compilation before the suites are allowed to start. */
+const WARMUP_TIMEOUT_MS = 60_000;
 
 /** Local-only placeholders. Nothing here is a real credential. */
 const TEST_DEFAULTS = {
@@ -143,17 +145,40 @@ async function warmUpApiRoutes(baseUrl) {
   try {
     walk(apiRoot);
   } catch {
-    return 0;
+    return { total: 0, unready: [] };
   }
 
-  await Promise.all(
-    urls.map((url) =>
-      fetch(url).catch(() => {
-        // A refusal is fine. Only compilation matters.
-      }),
-    ),
-  );
-  return urls.length;
+  /**
+   * An uncompiled route is distinguishable from a route that simply refuses the request. Our
+   * handlers always answer with JSON, so a 404 carrying HTML is the App Router's not-found page,
+   * which is what a request for a route that does not exist yet receives.
+   */
+  const stillCompiling = async (url) => {
+    try {
+      const response = await fetch(url);
+      return response.status === 404 && (response.headers.get("content-type") || "").includes("text/html");
+    } catch {
+      return true;
+    }
+  };
+
+  // Sequential on purpose. Firing every route at once asks the development server to compile
+  // twenty-odd entry points simultaneously, which is how this problem was made worse rather
+  // than better on the first attempt at fixing it.
+  const unready = [];
+  for (const url of urls) {
+    const deadline = Date.now() + WARMUP_TIMEOUT_MS;
+    let ready = false;
+    while (Date.now() < deadline) {
+      if (!(await stillCompiling(url))) {
+        ready = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!ready) unready.push(url.replace(baseUrl, ""));
+  }
+  return { total: urls.length, unready };
 }
 
 /** Stops the server and waits for it to actually exit, so nothing is still writing. */
@@ -220,8 +245,16 @@ async function main() {
     console.error("The test server did not become ready in time.");
     process.exit(1);
   }
-  const warmed = await warmUpApiRoutes(baseUrl);
-  log(`Compiled ${warmed} API routes before running the suites`);
+  const warmup = await warmUpApiRoutes(baseUrl);
+  if (warmup.unready.length > 0) {
+    // Failing here names the cause. Letting the suites run would instead surface it as an
+    // unrelated-looking 404 inside whichever test happened to touch the route first.
+    console.error(
+      `These API routes never finished compiling, so the suites would fail for the wrong reason:\n  ${warmup.unready.join("\n  ")}`,
+    );
+    process.exit(1);
+  }
+  log(`Compiled ${warmup.total} API routes before running the suites`);
 
   const childEnv = {
     ...process.env,
