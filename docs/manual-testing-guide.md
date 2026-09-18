@@ -19,6 +19,7 @@ Rule:
 3c-2. Run `STRIPE_WEBHOOK_SECRET=<local secret> ADMIN_TASK_TOKEN=<local token> npm run test:billing -- http://127.0.0.1:3000` and confirm every check passes.
 3c-3. Run `npm run test:account -- http://127.0.0.1:3000` and confirm every check passes. It needs the `unzip` command available.
 3d. Run `npm run qa:cleanup` afterwards and confirm no `qa-*@example.invalid` account remains in local D1.
+3d-2. `npm run test:e2e` runs the HTTP suites against the built worker rather than `npm run dev`. The development server compiles routes on demand and answers 404 with an HTML not-found page for a route it has not compiled yet, which made the sharing checks fail on roughly half of all cold runs while the deployed site was fine. If no build exists the runner makes one, so the first run is slower.
 3e. Shortcut for all of the above: `npm run test:all` runs lint, type checking, the unit suites, and both HTTP suites, starting and stopping its own server. Run `npm run build` only after it finishes, never alongside it.
 3f. To check a deployment rather than a local server, run `npm run test:smoke -- https://<deployment-url> --with-ai`. This is section 8 of `docs/production-provisioning-runbook.md` automated, and its output is numbered to match that table so it can be pasted in as release evidence. It writes to whatever database the deployment is bound to, so confirm the bindings first; it creates two throwaway accounts and deletes both at the end. Check 7 is skipped because photo grouping runs in the browser, and it remains a manual step.
 4. Test the current change on desktop and mobile widths.
@@ -36,7 +37,7 @@ Rule:
 | `npm run test:billing` | yes | optional | Webhook signatures, idempotency, event ordering, plan transitions, billing analytics |
 | `npm run test:account` | yes | no | Export contents, real archive integrity, deletion guards, and what remains in the database afterwards |
 | `npm run test:sharing` | yes | no | Share-link creation, ownership, what a recipient can and cannot see, revocation, expiry, and removal on deletion |
-| `npm run test:e2e` | starts its own | no | Applies local migrations, runs both HTTP suites, removes its test data |
+| `npm run test:e2e` | starts its own | no | Builds if needed, serves the built worker through workerd with local D1 and R2, applies local migrations, runs all four HTTP suites, removes its test data |
 | `npm run test:all` | starts its own | no | Lint, types, unit suites, then `test:e2e` |
 | `npm run test:smoke` | no, targets a deployment | optional | Section 8 of the provisioning runbook: provider configuration, guest demo metering, cookie hardening, plan ceilings, media ownership, share revocation, export, account deletion, robots directives, admin refusal |
 

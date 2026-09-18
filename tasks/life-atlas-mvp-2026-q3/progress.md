@@ -56,7 +56,9 @@ Owner-executed infrastructure, which an agent must not do unprompted:
 Remaining engineering work:
 
 7. `PA-701 to PA-705` Historical Atlas prototype, after the personal loop is deployed and measurable. Note the plan's own constraint: every historical fact must be human-verified, so an agent can build the structure, data model, map and timeline synchronisation, and SEO markup, but the owner must verify the content.
-9. Confirm the CI workflow on a real runner. It is committed and its commands are all verified locally, but this repository has no Git remote yet, so no run has been observed.
+9. ~~Confirm the CI workflow on a real runner.~~ The repository now has a remote and the workflow is pushed. Its commands were verified against a fresh clone rather than against a warm working tree, which is what exposed the flaky HTTP suite described below. A real GitHub runner result has still not been observed from here, because there is no GitHub authentication on this machine.
+
+A defect worth remembering was found while doing that. `npm run test:e2e` ran the HTTP suites against `next dev`, which compiles routes on demand and answers 404 with an HTML not-found page for a route it has not compiled yet. `api/shared/[token]/media/[index]` lost that race on roughly half of cold starts, taking every shared-photo check with it. It stayed invisible because it depended on state outside the repository: a machine that had run `npm run dev` had a warm `.next` and passed, while a fresh checkout and CI failed, and the deployed site was never affected because a production build compiles everything ahead of time. The suites now run against the built worker, verified with five consecutive cold runs on a fresh clone after measuring three failures in four runs beforehand. Two earlier fixes were wrong, both from treating one passing run as proof.
 
 ## Completion Snapshot
 

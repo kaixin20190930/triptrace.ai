@@ -5,8 +5,8 @@
 # suites create their own local D1 and R2 state and their own throwaway accounts, and
 # billing is exercised with locally signed webhook payloads rather than a Stripe account.
 #
-# Note: this repository had no remote when the workflow was added, so it has not yet been
-# observed running on a GitHub runner. The underlying commands are all verified locally.
+# The order matters: builds first, then the HTTP suites, because those suites run against the
+# built worker. See the comments on the steps themselves.
 
 name: CI
 
@@ -55,18 +55,22 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
-      # Starts its own development server on a free port, applies local migrations, runs
-      # the API, privacy, entitlement, and billing suites, then removes its test data.
-      - name: HTTP tests
-        run: npm run test:e2e
-
-      # Runs after the HTTP tests on purpose. Both the development server and the
-      # production build write to `.next`, and running them concurrently corrupts chunks.
+      # The builds run before the HTTP suites, because the suites exercise the built worker
+      # rather than a development server. Running them against `next dev` made them flaky:
+      # that server compiles routes on demand and answers 404 with an HTML not-found page for
+      # a route it has not compiled yet, which cost roughly half of all cold runs. The built
+      # artifact contains every route, and it is the same one that gets deployed.
       - name: Production build
         run: npm run build
 
       - name: Cloudflare build
         run: npm run cf:build
+
+      # Applies local migrations, serves the built worker through workerd with local D1 and R2
+      # bindings, runs the API, privacy, entitlement, billing, export and sharing suites, then
+      # removes its test data. It reuses the artifact built above rather than rebuilding.
+      - name: HTTP tests
+        run: npm run test:e2e
 
       - name: Confirm no secrets or local state were committed
         run: |
