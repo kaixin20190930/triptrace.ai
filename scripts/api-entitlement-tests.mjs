@@ -15,6 +15,7 @@
 // everything it created. It never touches pre-existing users or traces.
 
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const WITH_AI = args.includes("--with-ai");
@@ -283,13 +284,37 @@ async function run() {
   );
 
   // ---------------------------------------------------------------- map data contract
+  //
+  // Served over HTTP in production by Workers Assets, which intercepts before the worker runs.
+  // Locally, `wrangler dev` has no such interception: the request reaches the worker, which does
+  // not know about files in `public/`, so it answers with the App Router's HTML not-found page.
+  // Asserting a 200 here would therefore be testing the emulator rather than the product. The
+  // live check belongs to the deployment smoke test, which verifies it against the real origin as
+  // check 23 of `docs/production-provisioning-runbook.md`.
+  //
+  // What is still worth asserting locally is the part that is ours: the file exists in the build
+  // output and has the shape the map code expects.
   const landAsset = await fetch(`${BASE_URL}/world-land.json`);
-  const landBody = landAsset.ok ? await json(landAsset) : null;
-  check(
-    "the map outline is served from our own origin",
-    landAsset.ok && landBody?.format === "flat-lnglat-rings" && Array.isArray(landBody?.rings),
-    `status=${landAsset.status} rings=${landBody?.rings?.length}`,
-  );
+  if (landAsset.ok) {
+    const landBody = await json(landAsset);
+    check(
+      "the map outline is served from our own origin",
+      landBody?.format === "flat-lnglat-rings" && Array.isArray(landBody?.rings),
+      `status=${landAsset.status} rings=${landBody?.rings?.length}`,
+    );
+  } else {
+    let onDisk = null;
+    try {
+      onDisk = JSON.parse(readFileSync(".open-next/assets/world-land.json", "utf8"));
+    } catch {
+      onDisk = null;
+    }
+    check(
+      "the map outline is first-party and present in the build output",
+      onDisk?.format === "flat-lnglat-rings" && Array.isArray(onDisk?.rings),
+      `not served locally (status=${landAsset.status}); on disk rings=${onDisk?.rings?.length ?? "missing"}`,
+    );
+  }
 
   const locatedTrace = await createTrace(owner, {
     title: "QA located trace",

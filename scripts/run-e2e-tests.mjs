@@ -11,14 +11,12 @@
 // `.next` and will invalidate the development server's chunks.
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
-import { join, relative, sep } from "node:path";
 
 const DEV_VARS = ".dev.vars";
 const READY_TIMEOUT_MS = 120_000;
-/** Per-route ceiling for on-demand compilation before the suites are allowed to start. */
-const WARMUP_TIMEOUT_MS = 60_000;
+const WORKER_ENTRY = ".open-next/worker.js";
 
 /** Local-only placeholders. Nothing here is a real credential. */
 const TEST_DEFAULTS = {
@@ -107,78 +105,34 @@ async function waitForReady(baseUrl) {
 }
 
 /**
- * Requests every API route once so the development server compiles all of them up front.
+ * Ensures the Cloudflare build artifact exists, building it if it does not.
  *
- * This is not an optimisation. The development server compiles routes on demand, and a request
- * for a route it has not compiled yet does not wait for compilation: it falls through to the App
- * Router, which answers 404 with an HTML not-found page. So the first test to touch any given
- * route can fail for no reason other than being first.
+ * The suites run against the built worker rather than `next dev`, and the reason is worth
+ * recording. The development server compiles routes on demand, and a request for a route it has
+ * not compiled yet does not wait: it falls through to the App Router, which answers 404 with an
+ * HTML not-found page. For `/api/shared/[token]/media/[index]` that happened roughly half the
+ * time on a cold start, and repeated requests did not recover it, so the negative resolution
+ * appeared to stick for the life of the server.
  *
- * That failure mode is unpleasant to diagnose because it depends on state outside the repository.
- * A machine that has run `npm run dev` has a warm `.next` and passes, while a fresh checkout and
- * a CI runner fail on whichever route the suites happen to reach first. The deployed site is never
- * affected, because a production build compiles everything ahead of time, so the deployment smoke
- * test passes while the local suite fails.
+ * That produced a failure that looked like a broken sharing feature and was nothing of the kind.
+ * It depended on state outside the repository: a machine that had run `npm run dev` had a warm
+ * `.next` and passed, while a fresh checkout and CI failed. The deployed site was never affected,
+ * because a production build compiles every route ahead of time, so the deployment smoke test
+ * passed throughout. Two plausible-looking diagnoses were wrong before the flakiness was measured
+ * rather than inferred from a single run.
  *
- * Routes are discovered from the filesystem rather than listed here, so a new endpoint is covered
- * without anyone remembering to add it. Dynamic segments get a placeholder; the responses are
- * irrelevant and are deliberately ignored, since compiling the route is the entire point.
+ * Running against the built worker removes the mechanism instead of working around it, and it
+ * raises fidelity: this is the same artifact that gets deployed, served by workerd with the same
+ * local D1 and R2 bindings.
  */
-async function warmUpApiRoutes(baseUrl) {
-  const apiRoot = join(process.cwd(), "src", "app", "api");
-  const urls = [];
-
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (entry.name === "route.ts" || entry.name === "route.tsx") {
-        const segments = relative(apiRoot, dir).split(sep).filter(Boolean);
-        // `[token]` and `[...rest]` alike become something harmless and clearly not real.
-        const path = segments.map((s) => (s.startsWith("[") ? "warmup" : s)).join("/");
-        urls.push(`${baseUrl}/api/${path}`);
-      }
-    }
-  };
-
-  try {
-    walk(apiRoot);
-  } catch {
-    return { total: 0, unready: [] };
+async function ensureWorkerBuilt() {
+  if (existsSync(WORKER_ENTRY)) {
+    log("Reusing the existing Cloudflare build");
+    return true;
   }
-
-  /**
-   * An uncompiled route is distinguishable from a route that simply refuses the request. Our
-   * handlers always answer with JSON, so a 404 carrying HTML is the App Router's not-found page,
-   * which is what a request for a route that does not exist yet receives.
-   */
-  const stillCompiling = async (url) => {
-    try {
-      const response = await fetch(url);
-      return response.status === 404 && (response.headers.get("content-type") || "").includes("text/html");
-    } catch {
-      return true;
-    }
-  };
-
-  // Sequential on purpose. Firing every route at once asks the development server to compile
-  // twenty-odd entry points simultaneously, which is how this problem was made worse rather
-  // than better on the first attempt at fixing it.
-  const unready = [];
-  for (const url of urls) {
-    const deadline = Date.now() + WARMUP_TIMEOUT_MS;
-    let ready = false;
-    while (Date.now() < deadline) {
-      if (!(await stillCompiling(url))) {
-        ready = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    if (!ready) unready.push(url.replace(baseUrl, ""));
-  }
-  return { total: urls.length, unready };
+  log("Building the application, because no Cloudflare build was found");
+  if ((await run("npm", ["run", "build"])) !== 0) return false;
+  return (await run("npm", ["run", "cf:build"])) === 0;
 }
 
 /** Stops the server and waits for it to actually exit, so nothing is still writing. */
@@ -231,13 +185,20 @@ async function main() {
     process.exit(1);
   }
 
+  if (!(await ensureWorkerBuilt())) {
+    console.error("The Cloudflare build failed, so the suites cannot run against the real artifact.");
+    process.exit(1);
+  }
+
   const port = await findFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  log(`Starting the test server on ${baseUrl}`);
-  devServer = spawn("npx", ["next", "dev", "-p", String(port), "-H", "127.0.0.1"], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  log(`Starting the built worker on ${baseUrl}`);
+  devServer = spawn(
+    "npx",
+    ["opennextjs-cloudflare", "preview", "--", "--port", String(port), "--ip", "127.0.0.1"],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
   devServer.stdout.on("data", () => {});
   devServer.stderr.on("data", (chunk) => process.stderr.write(chunk));
 
@@ -245,16 +206,6 @@ async function main() {
     console.error("The test server did not become ready in time.");
     process.exit(1);
   }
-  const warmup = await warmUpApiRoutes(baseUrl);
-  if (warmup.unready.length > 0) {
-    // Failing here names the cause. Letting the suites run would instead surface it as an
-    // unrelated-looking 404 inside whichever test happened to touch the route first.
-    console.error(
-      `These API routes never finished compiling, so the suites would fail for the wrong reason:\n  ${warmup.unready.join("\n  ")}`,
-    );
-    process.exit(1);
-  }
-  log(`Compiled ${warmup.total} API routes before running the suites`);
 
   const childEnv = {
     ...process.env,
