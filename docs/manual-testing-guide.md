@@ -596,3 +596,130 @@ Automated coverage: `npm run test:unit` covers the checkout payload, price mappi
 primitives, and event mapping with no network. `npm run test:billing` drives the live webhook
 endpoint with locally signed payloads and asserts acceptance, rejection, idempotency,
 ordering, plan transitions, and billing analytics. Neither needs a Stripe account.
+
+## 12. Narrative Quality Acceptance With Real Photos
+
+This closes `PA-205/PA-206`. It is the one part of acceptance that cannot be automated and cannot
+be delegated, because it needs genuine personal photographs and a judgement about whether the
+writing is worth reading. Unrelated private images on the machine must not be substituted.
+
+Everything else in this guide checks that the product behaves correctly. This section checks
+whether it is any good.
+
+### 12.1 Where to run it
+
+Run against `https://triptrace.ai`, not a local server. The point is to exercise the real model
+with the real key through the real deployment. Traces created here land in the production database
+and can be deleted afterwards from the interface.
+
+### 12.2 Raise your own allowance first
+
+The Free plan allows five AI generations per month, which is not enough to judge quality across
+several photo sets. Grant your own account Founding Plus directly. There is no Stripe account yet,
+and none is needed for this.
+
+Sign up or sign in at `https://triptrace.ai` first, then find your user id and insert a row:
+
+```bash
+npx wrangler d1 execute DB --remote --command \
+  "SELECT id, email FROM users ORDER BY created_at DESC LIMIT 5;"
+
+npx wrangler d1 execute DB --remote --command \
+  "INSERT INTO subscriptions (id, user_id, provider, plan_key, status, current_period_end, cancel_at_period_end, created_at, updated_at)
+   VALUES ('sub_manual_owner', '<your user id>', 'manual', 'founding_plus', 'active', '2027-12-31T00:00:00.000Z', 0,
+           '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z');"
+```
+
+Confirm on `/plan` that it reports Founding Plus with 500 traces and 50 generations. Remove the row
+when you are finished if you want your account back on Free.
+
+### 12.3 Photo sets to use
+
+Five sets, chosen for what they test rather than for what they show. Between them they should
+include at least one set where you know the AI cannot possibly infer the facts, because that is
+where invention shows up.
+
+1. **A single strong photograph.** One image, no note. Tests whether it describes what is visible
+   or pads with atmosphere.
+2. **A short trip, six to ten photos, one place, one day.** With a two-sentence note. This is the
+   commonest real case.
+3. **A trip with no note at all, ten or more photos.** Tests how much it invents when given nothing
+   but pixels.
+4. **A set whose context is invisible.** Photographs where the meaning was the company, the
+   occasion, or the reason, none of which a model can see. Give no note. This is the most important
+   set: it is where a system that wants to please will start making things up.
+5. **A set with people in it.** Do not name anyone in the note. Tests whether it invents
+   relationships or attributes.
+
+### 12.4 What to check on every draft
+
+Facts, which are contractual rather than aesthetic. Any single failure here is a defect, not a
+matter of taste, because both `/privacy` and `/terms` promise it does not happen:
+
+1. No date is asserted that you did not supply. Not a year, not a season, not "last summer".
+2. No place is named that you did not supply and that is not legible in the photograph.
+3. No person is named, and no relationship is asserted, unless you supplied it.
+4. No event is asserted. A wedding, a birthday, a farewell, a reunion. If you did not say so, it
+   must not say so.
+5. No inferred characteristics about anyone: age, health, mood as fact, nationality, occupation.
+6. Nothing described that is not actually in the photograph. Check this one against the image.
+
+Writing, which is the product judgement:
+
+7. It opens in the scene rather than announcing the theme.
+8. It is specific to these photographs. Try the substitution test: could this paragraph be pasted
+   under a different set of holiday photographs without anyone noticing? If yes, it has failed,
+   even if it reads pleasantly.
+9. No clichés, no life lessons, no explaining why the moment mattered, no sentimental closing line.
+10. English, in every case, including when your note is in another language.
+11. Title under twelve words. Story roughly eighty to one hundred and forty. Four to six tags, each
+    concrete rather than abstract.
+12. It is labelled `Drafted with AI` and names the model.
+
+The question that decides this section: **would you keep this text, or would you rewrite it?**
+Record the answer per set. If the honest answer is "rewrite" for most sets, the drafting prompt
+needs work and that is a finding, not a failure of the test.
+
+### 12.5 Procedure per set
+
+1. Open `https://triptrace.ai/plan` and note your remaining generation count.
+2. Add the photos. Enter the note for the sets that have one, and nothing at all for the others.
+3. Draft, then read the result before touching anything, and record it against 12.4. Copy the text
+   somewhere, because editing it destroys the evidence.
+4. Check the facts panel: confirm any EXIF date and coordinates it found are correct against what
+   you know. A wrong date extracted from a photograph is a defect worth reporting.
+5. Edit one fact and confirm the confirmation checkbox clears.
+6. Confirm the facts and save.
+7. Open the trace in `/vault`, `/timeline`, and `/map` and confirm it is the same trace in all
+   three and that the map pin is where the photograph was taken.
+
+### 12.6 First save, observed once
+
+This closes `M2-010/PA-601/PA-602`. On the very first trace saved by a newly created account, in a
+real browser:
+
+1. Sign up fresh, save one trace, and confirm the response reports it as the first trace.
+2. Save a second trace and confirm it does not.
+3. Confirm exactly one `first_atlas_saved` row exists for that account:
+
+```bash
+npx wrangler d1 execute DB --remote --command \
+  "SELECT event_name, COUNT(*) FROM analytics_events WHERE user_id = '<user id>' GROUP BY event_name;"
+```
+
+### 12.7 Clustering with a real library
+
+This closes the section 2.1 follow-up, which until now has only been exercised with synthetic
+photographs. Select forty or more real photographs spanning several days and places in one go, then
+work through section 2.1. The judgement to make is whether the proposed groupings match how you
+would have divided those days yourself. Automated tests can prove the algorithm is consistent; only
+you can say whether it is sensible.
+
+### 12.8 What to report back
+
+For each of the five sets: the note you gave, the draft you got, a pass or fail against each item
+in 12.4, and whether you would keep or rewrite the text. Then the clustering judgement, and any
+wrong EXIF date or misplaced map pin.
+
+That is enough to decide whether the drafting prompt needs revision before the product is shown to
+anyone, and it is the last thing standing between the current deployment and being presentable.

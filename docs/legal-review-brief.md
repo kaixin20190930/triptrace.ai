@@ -155,9 +155,8 @@ monitored inbox through Cloudflare Email Routing. Verified: routing enabled and 
 live at `route1`, `route2` and `route3.mx.cloudflare.net`, destination address verified, rule
 enabled and matching the literal recipient.
 
-What has not been observed is a message arriving. The configuration is verified end to end but a
-delivery test has not been run, and the realistic failure mode is a forwarded message landing in
-the destination's spam folder rather than the route being wrong.
+Delivery is confirmed: a test message sent to the published address arrived at the destination
+inbox on 2026-09-18.
 
 Publishing `privacy@triptrace.ai` rather than the personal Gmail address is deliberate. It keeps a
 personal address off a public page, and it can be repointed later without editing the notice.

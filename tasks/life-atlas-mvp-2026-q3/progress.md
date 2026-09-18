@@ -43,14 +43,14 @@ Next implementation plan: `tasks/life-atlas-mvp-2026-q3/next-implementation-plan
 
 Owner-only steps, which cannot be completed by an agent:
 
-1. `PA-205/PA-206 follow-up` Narrative-quality acceptance with genuine personal travel and life photos, plus section 2.1 clustering QA with a real photo library. Only the owner can supply these; unrelated private images on this machine must not be substituted.
-2. `M2-010/PA-601/PA-602 follow-up` Observe `first_atlas_saved` once in a signed-in browser. The server flag and the client trigger are both verified in code and by API test; the remaining step is a real browser save.
+1. `PA-205/PA-206 follow-up` Narrative-quality acceptance with genuine personal travel and life photos, plus section 2.1 clustering QA with a real photo library. Only the owner can supply these; unrelated private images on this machine must not be substituted. Section 12 of `docs/manual-testing-guide.md` now sets this out step by step, with the five photo sets to use, the factual claims that count as defects rather than taste, the substitution test for generic prose, and the SQL to raise the owner's own allowance past the Free plan's five generations so the judgement can be made across more than one set.
+2. `M2-010/PA-601/PA-602 follow-up` Observe `first_atlas_saved` once in a signed-in browser. The server flag and the client trigger are both verified in code and by API test; the remaining step is a real browser save. Folded into section 12.6 of the testing guide so it happens during the same sitting.
 3. Section 10 of `docs/manual-testing-guide.md` in a real browser, especially the guest-demo refusal and the Free-plan limit copy.
 4. Section 9.2 of `docs/manual-testing-guide.md` in a real browser. The map geometry is covered by automated tests, but pan, pinch zoom, focus rings, theme legibility, and the absence of third-party requests need human eyes on a real device.
 
 Owner-executed infrastructure, which an agent must not do unprompted:
 
-5. `RB-301` Provision fresh production D1/R2 resources following `docs/production-provisioning-runbook.md`. The current `wrangler.jsonc` still points at the legacy production database and bucket, so no remote migration or deploy may run until the bindings are repointed.
+5. ~~`RB-301` Provision fresh production D1/R2 resources.~~ Done 2026-09-15. `triptrace.ai` serves the rebuilt product from the Worker, the legacy database, bucket and Pages project are deleted after a verified backup, and the smoke test passes 26 of 27 against the apex.
 6. Create the Stripe account, the `$9.99` monthly and `$79` annual prices, and the webhook endpoint, then run the test-mode checkout in section 11.3 of the manual testing guide. Every code path is implemented and locally verified; only the account and keys are missing.
 
 Remaining engineering work:
