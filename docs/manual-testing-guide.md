@@ -723,3 +723,8 @@ wrong EXIF date or misplaced map pin.
 
 That is enough to decide whether the drafting prompt needs revision before the product is shown to
 anyone, and it is the last thing standing between the current deployment and being presentable.
+
+
+### Related product link (2026-10-26)
+
+Open any AppShell page and verify the footer RapCraft link opens https://rapcraft.ai. It is an external product link and does not include account or trace data.

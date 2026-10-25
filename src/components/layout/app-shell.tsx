@@ -71,6 +71,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Link href="/terms" className="underline-offset-4 hover:underline hover:text-foreground">
               Terms
             </Link>
+            <a href="https://rapcraft.ai" className="underline-offset-4 hover:underline hover:text-foreground">RapCraft</a>
             <span>Your traces are private by default.</span>
           </div>
         </footer>
